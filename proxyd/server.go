@@ -697,6 +697,7 @@ func (s *Server) processTransaction(ctx context.Context, req *RPCReq) (*types.Tr
 		return nil, nil, ErrParseErr
 	}
 
+	log.Debug("Req", "req", req, "req_id", GetReqID(ctx))
 	log.Debug("Params", "params", params, "req_id", GetReqID(ctx))
 
 	if len(params) != 1 {
