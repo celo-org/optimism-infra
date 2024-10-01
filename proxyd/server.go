@@ -697,6 +697,8 @@ func (s *Server) processTransaction(ctx context.Context, req *RPCReq) (*types.Tr
 		return nil, nil, ErrParseErr
 	}
 
+	log.Debug("Params", "params", params, "req_id", GetReqID(ctx))
+
 	if len(params) != 1 {
 		log.Debug("raw transaction request has invalid number of params", "req_id", GetReqID(ctx))
 		return nil, nil, ErrInvalidParams("missing value for required argument 0")
@@ -707,6 +709,8 @@ func (s *Server) processTransaction(ctx context.Context, req *RPCReq) (*types.Tr
 		log.Debug("error decoding raw tx data", "err", err, "req_id", GetReqID(ctx))
 		return nil, nil, ErrInvalidParams(err.Error())
 	}
+
+	log.Debug("Data", "data", data, "req_id", GetReqID(ctx))
 
 	tx := new(types.Transaction)
 	if err := tx.UnmarshalBinary(data); err != nil {
