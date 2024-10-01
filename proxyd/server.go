@@ -714,7 +714,7 @@ func (s *Server) processTransaction(ctx context.Context, req *RPCReq) (*types.Tr
 	log.Debug("Data", "data", data, "req_id", GetReqID(ctx))
 
 	tx := new(types.Transaction)
-	if err := tx.UnmarshalBinary(data); err != nil {
+	if err := tx.UnmarshalBinary(data[1:]); err != nil {
 		log.Debug("could not unmarshal transaction", "err", err, "req_id", GetReqID(ctx))
 		return nil, nil, ErrInvalidParams(err.Error())
 	}
