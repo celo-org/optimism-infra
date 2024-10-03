@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"math/big"
 	"net/http"
 	"os"
 	"time"
@@ -316,20 +315,6 @@ func Start(config *Config) (*Server, func(), error) {
 		}
 	}
 
-	whitelistedGasFeeAddressesMap := make(map[common.Address]*big.Rat)
-	if config.WhitelistedGasFeeAddresses != nil {
-		whitelistedGasFeeAddressesMap = make(map[common.Address]*big.Rat, len(config.WhitelistedGasFeeAddresses))
-		for _, addr := range config.WhitelistedGasFeeAddresses {
-			// Ensure that the address is in checksum format, or discard it
-			if !common.IsHexAddress(addr) {
-				log.Warn("invalid sanctioned address", "address", addr)
-				continue
-			}
-			address := common.HexToAddress(addr)
-			whitelistedGasFeeAddressesMap[address] = big.NewRat(10, 1)
-		}
-	}
-
 	srv, err := NewServer(
 		backendGroups,
 		wsBackendGroup,
@@ -348,7 +333,6 @@ func Start(config *Config) (*Server, func(), error) {
 		config.BatchConfig.MaxSize,
 		redisClient,
 		sanctionedAddressesMap,
-		whitelistedGasFeeAddressesMap,
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("error creating server: %w", err)

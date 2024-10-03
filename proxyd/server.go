@@ -19,7 +19,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	// "github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
@@ -52,33 +51,32 @@ const (
 var emptyArrayResponse = json.RawMessage("[]")
 
 type Server struct {
-	BackendGroups                 map[string]*BackendGroup
-	wsBackendGroup                *BackendGroup
-	wsMethodWhitelist             *StringSet
-	rpcMethodMappings             map[string]string
-	maxBodySize                   int64
-	enableRequestLog              bool
-	maxRequestBodyLogLen          int
-	authenticatedPaths            map[string]string
-	timeout                       time.Duration
-	maxUpstreamBatchSize          int
-	maxBatchSize                  int
-	enableServedByHeader          bool
-	upgrader                      *websocket.Upgrader
-	mainLim                       FrontendRateLimiter
-	overrideLims                  map[string]FrontendRateLimiter
-	senderLim                     FrontendRateLimiter
-	allowedChainIds               []*big.Int
-	limExemptOrigins              []*regexp.Regexp
-	limExemptUserAgents           []*regexp.Regexp
-	globallyLimitedMethods        map[string]bool
-	rpcServer                     *http.Server
-	wsServer                      *http.Server
-	cache                         RPCCache
-	srvMu                         sync.Mutex
-	rateLimitHeader               string
-	sanctionedAddresses           map[common.Address]struct{}
-	whitelistedGasFeeAddressesMap map[common.Address]*big.Rat
+	BackendGroups          map[string]*BackendGroup
+	wsBackendGroup         *BackendGroup
+	wsMethodWhitelist      *StringSet
+	rpcMethodMappings      map[string]string
+	maxBodySize            int64
+	enableRequestLog       bool
+	maxRequestBodyLogLen   int
+	authenticatedPaths     map[string]string
+	timeout                time.Duration
+	maxUpstreamBatchSize   int
+	maxBatchSize           int
+	enableServedByHeader   bool
+	upgrader               *websocket.Upgrader
+	mainLim                FrontendRateLimiter
+	overrideLims           map[string]FrontendRateLimiter
+	senderLim              FrontendRateLimiter
+	allowedChainIds        []*big.Int
+	limExemptOrigins       []*regexp.Regexp
+	limExemptUserAgents    []*regexp.Regexp
+	globallyLimitedMethods map[string]bool
+	rpcServer              *http.Server
+	wsServer               *http.Server
+	cache                  RPCCache
+	srvMu                  sync.Mutex
+	rateLimitHeader        string
+	sanctionedAddresses    map[common.Address]struct{}
 }
 
 type limiterFunc func(method string) bool
@@ -101,7 +99,6 @@ func NewServer(
 	maxBatchSize int,
 	redisClient *redis.Client,
 	sanctionedAddresses map[common.Address]struct{},
-	whitelistedGasFeeAddressesMap map[common.Address]*big.Rat,
 ) (*Server, error) {
 	if cache == nil {
 		cache = &NoopRPCCache{}
@@ -194,16 +191,15 @@ func NewServer(
 		upgrader: &websocket.Upgrader{
 			HandshakeTimeout: defaultWSHandshakeTimeout,
 		},
-		mainLim:                       mainLim,
-		overrideLims:                  overrideLims,
-		globallyLimitedMethods:        globalMethodLims,
-		senderLim:                     senderLim,
-		allowedChainIds:               senderRateLimitConfig.AllowedChainIds,
-		limExemptOrigins:              limExemptOrigins,
-		limExemptUserAgents:           limExemptUserAgents,
-		rateLimitHeader:               rateLimitHeader,
-		sanctionedAddresses:           sanctionedAddresses,
-		whitelistedGasFeeAddressesMap: whitelistedGasFeeAddressesMap,
+		mainLim:                mainLim,
+		overrideLims:           overrideLims,
+		globallyLimitedMethods: globalMethodLims,
+		senderLim:              senderLim,
+		allowedChainIds:        senderRateLimitConfig.AllowedChainIds,
+		limExemptOrigins:       limExemptOrigins,
+		limExemptUserAgents:    limExemptUserAgents,
+		rateLimitHeader:        rateLimitHeader,
+		sanctionedAddresses:    sanctionedAddresses,
 	}, nil
 }
 
@@ -719,9 +715,8 @@ func (s *Server) processTransaction(ctx context.Context, req *RPCReq) (*types.Tr
 
 	signer := types.LatestSignerForChainID(tx.ChainId())
 	from, err := types.Sender(signer, tx)
-	//msg, err := core.TransactionToMessage(tx, types.LatestSignerForChainID(tx.ChainId()), tx.ChainId(), s.whitelistedGasFeeAddressesMap)
 	if err != nil {
-		log.Debug("could not get message from transaction", "err", err, "req_id", GetReqID(ctx))
+		log.Debug("could not get sender from transaction with LatestSignerForChainID", "err", err, "req_id", GetReqID(ctx))
 		return nil, nil, ErrInvalidParams(err.Error())
 	}
 
@@ -734,7 +729,6 @@ func (s *Server) filterSanctionedAddresses(ctx context.Context, req *RPCReq) err
 		return err
 	}
 
-	//from := msg.From
 	to := *tx.To()
 
 	if _, ok := s.sanctionedAddresses[*from]; ok {

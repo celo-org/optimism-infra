@@ -53,15 +53,15 @@ func TestProcessTransaction(t *testing.T) {
 				Params: json.RawMessage(`["` + tc.rawTx + `"]`),
 			}
 
-			tx, msg, err := server.processTransaction(context.Background(), req)
+			tx, from, err := server.processTransaction(context.Background(), req)
 
 			if tc.expectErr {
 				assert.Error(t, err)
 			} else {
 				assert.NoError(t, err)
 				assert.NotNil(t, tx)
-				assert.NotNil(t, msg)
-				assert.Equal(t, tc.expectedFrom, msg.From.Hex())
+				// assert.NotNil(t, msg)
+				assert.Equal(t, tc.expectedFrom, from.Hex())
 				assert.Equal(t, tc.expectedTo, tx.To().Hex())
 			}
 		})
