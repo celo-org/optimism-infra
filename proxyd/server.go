@@ -19,7 +19,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
@@ -690,7 +689,7 @@ func (s *Server) isGlobalLimit(method string) bool {
 	return s.globallyLimitedMethods[method]
 }
 
-func (s *Server) processTransaction(ctx context.Context, req *RPCReq) (*types.Transaction, *core.Message, error) {
+func (s *Server) processTransaction(ctx context.Context, req *RPCReq) (*types.Transaction, *common.Address, error) {
 	var params []string
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		log.Debug("error unmarshalling raw transaction params", "err", err, "req_Id", GetReqID(ctx))
@@ -714,25 +713,25 @@ func (s *Server) processTransaction(ctx context.Context, req *RPCReq) (*types.Tr
 		return nil, nil, ErrInvalidParams(err.Error())
 	}
 
-	msg, err := core.TransactionToMessage(tx, types.LatestSignerForChainID(tx.ChainId()), tx.ChainId(), nil)
+	signer := types.LatestSignerForChainID(tx.ChainId())
+	from, err := types.Sender(signer, tx)
 	if err != nil {
-		log.Debug("could not get message from transaction", "err", err, "req_id", GetReqID(ctx))
+		log.Debug("could not get sender from transaction with LatestSignerForChainID", "err", err, "req_id", GetReqID(ctx))
 		return nil, nil, ErrInvalidParams(err.Error())
 	}
 
-	return tx, msg, nil
+	return tx, &from, nil
 }
 
 func (s *Server) filterSanctionedAddresses(ctx context.Context, req *RPCReq) error {
-	tx, msg, err := s.processTransaction(ctx, req)
+	tx, from, err := s.processTransaction(ctx, req)
 	if err != nil {
 		return err
 	}
 
-	from := msg.From
 	to := *tx.To()
 
-	if _, ok := s.sanctionedAddresses[from]; ok {
+	if _, ok := s.sanctionedAddresses[*from]; ok {
 		log.Debug("sender is sanctioned", "sender", from, "req_id", GetReqID(ctx))
 		return ErrSanctionedAddress
 	} else if _, ok := s.sanctionedAddresses[to]; ok {
@@ -744,7 +743,7 @@ func (s *Server) filterSanctionedAddresses(ctx context.Context, req *RPCReq) err
 }
 
 func (s *Server) rateLimitSender(ctx context.Context, req *RPCReq) error {
-	tx, msg, err := s.processTransaction(ctx, req)
+	tx, from, err := s.processTransaction(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -754,13 +753,13 @@ func (s *Server) rateLimitSender(ctx context.Context, req *RPCReq) error {
 		return txpool.ErrInvalidSender
 	}
 
-	ok, err := s.senderLim.Take(ctx, fmt.Sprintf("%s:%d", msg.From.Hex(), tx.Nonce()))
+	ok, err := s.senderLim.Take(ctx, fmt.Sprintf("%s:%d", from.Hex(), tx.Nonce()))
 	if err != nil {
 		log.Error("error taking from sender limiter", "err", err, "req_id", GetReqID(ctx))
 		return ErrInternal
 	}
 	if !ok {
-		log.Debug("sender rate limit exceeded", "sender", msg.From.Hex(), "req_id", GetReqID(ctx))
+		log.Debug("sender rate limit exceeded", "sender", from.Hex(), "req_id", GetReqID(ctx))
 		return ErrOverSenderRateLimit
 	}
 
