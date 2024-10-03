@@ -52,32 +52,33 @@ const (
 var emptyArrayResponse = json.RawMessage("[]")
 
 type Server struct {
-	BackendGroups          map[string]*BackendGroup
-	wsBackendGroup         *BackendGroup
-	wsMethodWhitelist      *StringSet
-	rpcMethodMappings      map[string]string
-	maxBodySize            int64
-	enableRequestLog       bool
-	maxRequestBodyLogLen   int
-	authenticatedPaths     map[string]string
-	timeout                time.Duration
-	maxUpstreamBatchSize   int
-	maxBatchSize           int
-	enableServedByHeader   bool
-	upgrader               *websocket.Upgrader
-	mainLim                FrontendRateLimiter
-	overrideLims           map[string]FrontendRateLimiter
-	senderLim              FrontendRateLimiter
-	allowedChainIds        []*big.Int
-	limExemptOrigins       []*regexp.Regexp
-	limExemptUserAgents    []*regexp.Regexp
-	globallyLimitedMethods map[string]bool
-	rpcServer              *http.Server
-	wsServer               *http.Server
-	cache                  RPCCache
-	srvMu                  sync.Mutex
-	rateLimitHeader        string
-	sanctionedAddresses    map[common.Address]struct{}
+	BackendGroups                 map[string]*BackendGroup
+	wsBackendGroup                *BackendGroup
+	wsMethodWhitelist             *StringSet
+	rpcMethodMappings             map[string]string
+	maxBodySize                   int64
+	enableRequestLog              bool
+	maxRequestBodyLogLen          int
+	authenticatedPaths            map[string]string
+	timeout                       time.Duration
+	maxUpstreamBatchSize          int
+	maxBatchSize                  int
+	enableServedByHeader          bool
+	upgrader                      *websocket.Upgrader
+	mainLim                       FrontendRateLimiter
+	overrideLims                  map[string]FrontendRateLimiter
+	senderLim                     FrontendRateLimiter
+	allowedChainIds               []*big.Int
+	limExemptOrigins              []*regexp.Regexp
+	limExemptUserAgents           []*regexp.Regexp
+	globallyLimitedMethods        map[string]bool
+	rpcServer                     *http.Server
+	wsServer                      *http.Server
+	cache                         RPCCache
+	srvMu                         sync.Mutex
+	rateLimitHeader               string
+	sanctionedAddresses           map[common.Address]struct{}
+	whitelistedGasFeeAddressesMap map[common.Address]*big.Rat
 }
 
 type limiterFunc func(method string) bool
@@ -100,6 +101,7 @@ func NewServer(
 	maxBatchSize int,
 	redisClient *redis.Client,
 	sanctionedAddresses map[common.Address]struct{},
+	whitelistedGasFeeAddressesMap map[common.Address]*big.Rat,
 ) (*Server, error) {
 	if cache == nil {
 		cache = &NoopRPCCache{}
@@ -192,15 +194,16 @@ func NewServer(
 		upgrader: &websocket.Upgrader{
 			HandshakeTimeout: defaultWSHandshakeTimeout,
 		},
-		mainLim:                mainLim,
-		overrideLims:           overrideLims,
-		globallyLimitedMethods: globalMethodLims,
-		senderLim:              senderLim,
-		allowedChainIds:        senderRateLimitConfig.AllowedChainIds,
-		limExemptOrigins:       limExemptOrigins,
-		limExemptUserAgents:    limExemptUserAgents,
-		rateLimitHeader:        rateLimitHeader,
-		sanctionedAddresses:    sanctionedAddresses,
+		mainLim:                       mainLim,
+		overrideLims:                  overrideLims,
+		globallyLimitedMethods:        globalMethodLims,
+		senderLim:                     senderLim,
+		allowedChainIds:               senderRateLimitConfig.AllowedChainIds,
+		limExemptOrigins:              limExemptOrigins,
+		limExemptUserAgents:           limExemptUserAgents,
+		rateLimitHeader:               rateLimitHeader,
+		sanctionedAddresses:           sanctionedAddresses,
+		whitelistedGasFeeAddressesMap: whitelistedGasFeeAddressesMap,
 	}, nil
 }
 
@@ -416,7 +419,6 @@ func (s *Server) handleBatchRPC(ctx context.Context, reqs []json.RawMessage, isL
 
 	for i := range reqs {
 		parsedReq, err := ParseRPCReq(reqs[i])
-		log.Debug("Parsed RPC call:", parsedReq)
 		if err != nil {
 			log.Info("error parsing RPC call", "source", "rpc", "err", err)
 			responses[i] = NewRPCErrorRes(nil, err)
@@ -715,19 +717,11 @@ func (s *Server) processTransaction(ctx context.Context, req *RPCReq) (*types.Tr
 		return nil, nil, ErrInvalidParams(err.Error())
 	}
 
-	log.Debug("Unmarshalled Tx message", "tx", tx, "req_id", GetReqID(ctx))
-
-	exchangeRates := make(map[common.Address]*big.Rat)
-	addr1 := common.HexToAddress("0x874069Fa1Eb16D44d622F2e0Ca25eeA172369bC1")
-	exchangeRates[addr1] = big.NewRat(10, 1)
-
-	msg, err := core.TransactionToMessage(tx, types.LatestSignerForChainID(tx.ChainId()), tx.ChainId(), exchangeRates)
+	msg, err := core.TransactionToMessage(tx, types.LatestSignerForChainID(tx.ChainId()), tx.ChainId(), s.whitelistedGasFeeAddressesMap)
 	if err != nil {
 		log.Debug("could not get message from transaction", "err", err, "req_id", GetReqID(ctx))
 		return nil, nil, ErrInvalidParams(err.Error())
 	}
-
-	log.Debug("Tx message", "message", msg, "req_id", GetReqID(ctx))
 
 	return tx, msg, nil
 }
