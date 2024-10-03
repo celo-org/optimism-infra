@@ -416,6 +416,7 @@ func (s *Server) handleBatchRPC(ctx context.Context, reqs []json.RawMessage, isL
 
 	for i := range reqs {
 		parsedReq, err := ParseRPCReq(reqs[i])
+		log.Debug("Parsed RPC call:", parsedReq)
 		if err != nil {
 			log.Info("error parsing RPC call", "source", "rpc", "err", err)
 			responses[i] = NewRPCErrorRes(nil, err)
