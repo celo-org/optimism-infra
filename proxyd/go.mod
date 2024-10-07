@@ -6,7 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.4.0
 	github.com/alicebob/miniredis v2.5.0+incompatible
 	github.com/emirpasic/gods v1.18.1
-	github.com/ethereum/go-ethereum v1.13.15
+	github.com/ethereum/go-ethereum v1.14.11
 	github.com/go-redsync/redsync/v4 v4.10.0
 	github.com/golang/snappy v0.0.5-0.20220116011046-fa5810519dcb
 	github.com/gorilla/mux v1.8.0
@@ -89,4 +89,4 @@ require (
 	rsc.io/tmplfunc v0.0.3 // indirect
 )
 
-replace github.com/ethereum/go-ethereum => github.com/celo-org/op-geth v1.101408.1-0.20240925125220-83ce94f606e4
+replace github.com/ethereum/go-ethereum => github.com/celo-org/op-geth v1.101408.1-0.20241007100034-48d785113724

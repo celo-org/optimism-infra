@@ -26,6 +26,8 @@ github.com/btcsuite/btcd/chaincfg/chainhash v1.0.1 h1:q0rUy8C/TYNBQS1+CGKw68tLOF
 github.com/btcsuite/btcd/chaincfg/chainhash v1.0.1/go.mod h1:7SFka0XMvUgj3hfZtydOrQY2mwhPclbT2snogU7SQQc=
 github.com/celo-org/op-geth v1.101408.1-0.20240925125220-83ce94f606e4 h1:YlNGQZukgmhSu+uQeKpttK599ZiGYLVZ4lqb6LnAM2w=
 github.com/celo-org/op-geth v1.101408.1-0.20240925125220-83ce94f606e4/go.mod h1:Mk8AhvlqFbjI9oW2ymThSSoqc6kiEH0/tCmHGMEu6ac=
+github.com/celo-org/op-geth v1.101408.1-0.20241007100034-48d785113724 h1:gfK5asxKbtG/imcgqyZOd0dQbp4pL/dP77fuEoUoOxU=
+github.com/celo-org/op-geth v1.101408.1-0.20241007100034-48d785113724/go.mod h1:Mk8AhvlqFbjI9oW2ymThSSoqc6kiEH0/tCmHGMEu6ac=
 github.com/cespare/cp v0.1.0 h1:SE+dxFebS7Iik5LK0tsi1k9ZCxEaFX4AjQmoyA+1dJk=
 github.com/cespare/cp v0.1.0/go.mod h1:SOGHArjBr4JWaSDEVpWpo/hNg6RoKrls6Oh40hiwW+s=
 github.com/cespare/xxhash/v2 v2.2.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
