@@ -9,13 +9,14 @@ import (
 	"os"
 	"time"
 
+	"log/slog"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/semaphore"
-	"log/slog"
 )
 
 func SetLogLevel(logLevel slog.Leveler) {

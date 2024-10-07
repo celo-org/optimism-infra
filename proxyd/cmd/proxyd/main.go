@@ -11,8 +11,9 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/BurntSushi/toml"
 	"log/slog"
+
+	"github.com/BurntSushi/toml"
 
 	"github.com/ethereum/go-ethereum/log"
 

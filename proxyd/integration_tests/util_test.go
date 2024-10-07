@@ -10,10 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"log/slog"
+
 	"github.com/BurntSushi/toml"
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
-	"log/slog"
 
 	"github.com/ethereum/go-ethereum/log"
 
