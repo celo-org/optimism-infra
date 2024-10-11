@@ -3,10 +3,16 @@ package proxyd
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"math/big"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestProcessTransaction(t *testing.T) {
@@ -101,6 +107,13 @@ func TestFilterSanctionedAddresses(t *testing.T) {
 			},
 			expected: nil,
 		},
+		{
+			name: "Create tx with non sanctiond address",
+			req: &RPCReq{
+				Params: json.RawMessage(fmt.Sprintf(`["%s"]`, makeContractCreationTransaction(t))),
+			},
+			expected: nil,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -109,4 +122,24 @@ func TestFilterSanctionedAddresses(t *testing.T) {
 			assert.Equal(t, tc.expected, err)
 		})
 	}
+}
+
+func makeContractCreationTransaction(t *testing.T) string {
+	one := big.NewInt(1)
+	tx := types.NewTx(&types.DynamicFeeTx{
+		Nonce:     1,
+		ChainID:   one,
+		GasFeeCap: one,
+		GasTipCap: one,
+		Gas:       1,
+		Data:      make([]byte, 40),
+	})
+	key, err := crypto.GenerateKey()
+	require.NoError(t, err)
+	signedTx, err := types.SignTx(tx, types.NewLondonSigner(tx.ChainId()), key)
+	require.NoError(t, err)
+	rawTxBytes, err := signedTx.MarshalBinary()
+	require.NoError(t, err)
+	h := hexutil.Encode(rawTxBytes)
+	return h
 }
