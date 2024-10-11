@@ -729,14 +729,17 @@ func (s *Server) filterSanctionedAddresses(ctx context.Context, req *RPCReq) err
 		return err
 	}
 
-	to := *tx.To()
-
 	if _, ok := s.sanctionedAddresses[*from]; ok {
 		log.Debug("sender is sanctioned", "sender", from, "req_id", GetReqID(ctx))
 		return ErrSanctionedAddress
-	} else if _, ok := s.sanctionedAddresses[to]; ok {
-		log.Debug("recipient is sanctioned", "recipient", to, "req_id", GetReqID(ctx))
-		return ErrSanctionedAddress
+	}
+	to := tx.To()
+	// Create transactions do not have a "to" address so in this case "to" can be nil.
+	if to != nil {
+		if _, ok := s.sanctionedAddresses[*to]; ok {
+			log.Debug("recipient is sanctioned", "recipient", to, "req_id", GetReqID(ctx))
+			return ErrSanctionedAddress
+		}
 	}
 
 	return nil
