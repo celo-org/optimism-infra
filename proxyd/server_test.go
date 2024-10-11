@@ -108,7 +108,7 @@ func TestFilterSanctionedAddresses(t *testing.T) {
 			expected: nil,
 		},
 		{
-			name: "Create tx with non sanctiond address",
+			name: "Create tx with non sanctioned address",
 			req: &RPCReq{
 				Params: json.RawMessage(fmt.Sprintf(`["%s"]`, makeContractCreationTransaction(t))),
 			},
