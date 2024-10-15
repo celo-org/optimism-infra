@@ -4,3 +4,5 @@
 coverage.out
 
 bin/
+**/__pycache__/
+op-conductor-ops/alvaro-op-stack.toml
