@@ -1,0 +1,33 @@
+# Path to the SSL/TLS certificate file
+#cert_path = "./cacert.pem"
+
+# Network configurations
+[networks]
+
+[networks.baklava-cel2]
+sequencers = [
+    "0",
+    "1",
+    "2",
+]
+
+# Sequencer configurations
+[sequencers]
+
+[sequencers.0]
+raft_addr = "http://localhost:8001/api/v1/namespaces/baklava-cel2/services/op-conductor-consensus-0:consensus/proxy/"
+conductor_rpc_url = "http://localhost:8001/api/v1/namespaces/baklava-cel2/services/op-conductor-rpc-0:rpc/proxy/"
+node_rpc_url = "http://localhost:8001/api/v1/namespaces/baklava-cel2/services/op-node-sequencer-rpc-0:rpc/proxy/"
+voting = true
+
+[sequencers.1]
+raft_addr = "http://localhost:8001/api/v1/namespaces/baklava-cel2/services/op-conductor-consensus-1:consensus/proxy/"
+conductor_rpc_url = "http://localhost:8001/api/v1/namespaces/baklava-cel2/services/op-conductor-rpc-1:rpc/proxy/"
+node_rpc_url = "http://localhost:8001/api/v1/namespaces/baklava-cel2/services/op-node-sequencer-rpc-1:rpc/proxy/"
+voting = true
+
+[sequencers.2]
+raft_addr = "http://localhost:8001/api/v1/namespaces/baklava-cel2/services/op-conductor-consensus-2:consensus/proxy/"
+conductor_rpc_url = "http://localhost:8001/api/v1/namespaces/baklava-cel2/services/op-conductor-rpc-2:rpc/proxy/"
+node_rpc_url = "http://localhost:8001/api/v1/namespaces/baklava-cel2/services/op-node-sequencer-rpc-2:rpc/proxy/"
+voting = true
