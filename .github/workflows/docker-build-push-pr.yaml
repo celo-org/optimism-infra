@@ -10,9 +10,28 @@ on:
   workflow_dispatch:
 
 jobs:
+
+  detect-files-changed:
+    runs-on: ubuntu-latest
+    outputs:
+      files-changed: ${{ steps.detect-files-changed.outputs.all_changed_files }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Detect files changed
+        id: detect-files-changed
+        uses: tj-actions/changed-files@v44
+        with:
+          separator: ','
+
   build-container-proxyd:
     uses: celo-org/reusable-workflows/.github/workflows/container-cicd.yaml@v2.0.4
     name: Build proxyd image container
+    needs: detect-files-changed
+    if: |
+      contains(needs.detect-files-changed.outputs.files-changed, 'proxyd') ||
+      contains(needs.detect-files-changed.outputs.files-changed, '.github/workflows/docker-build-scan.yaml') ||
+      github.event_name == 'workflow_dispatch' ||
+      true
     permissions:
       contents: read
       id-token: write
@@ -25,4 +44,27 @@ jobs:
       service-account: optimism-infra@devopsre.iam.gserviceaccount.com
       context: .
       file: ./proxyd/Dockerfile
+      trivy: false
+
+  build-container-op-conductor-ops:
+    uses: celo-org/reusable-workflows/.github/workflows/container-cicd.yaml@v2.0.4
+    name: Build proxyd image container
+    needs: detect-files-changed
+    if: |
+      contains(needs.detect-files-changed.outputs.files-changed, 'op-conductor-ops') ||
+      contains(needs.detect-files-changed.outputs.files-changed, '.github/workflows/docker-build-scan.yaml') ||
+      github.event_name == 'workflow_dispatch' ||
+      true
+    permissions:
+      contents: read
+      id-token: write
+      security-events: write
+    with:
+      artifact-registry: us-west1-docker.pkg.dev/devopsre/dev-images/op-conductor-ops
+      tags: pr
+      platforms: linux/amd64
+      workload-id-provider: projects/1094498259535/locations/global/workloadIdentityPools/gh-optimism-infra/providers/github-by-repos
+      service-account: optimism-infra@devopsre.iam.gserviceaccount.com
+      context: .
+      file: ./op-conductor-ops/Dockerfile
       trivy: false
