@@ -7,8 +7,9 @@ on:
   workflow_dispatch:
 
 jobs:
-  compute-tag:
+  compute-tag-proxyd:
     runs-on: 'ubuntu-latest'
+    if: startsWith(github.ref_name, 'proxyd-')
     permissions:
       pull-requests: read
     outputs:
@@ -21,7 +22,7 @@ jobs:
         run: echo "::set-output name=modified_tag::$(echo '${{ github.ref_name }}' | sed 's/^proxyd-//')"
   
   build-container-proxyd-tag:
-    needs: compute-tag
+    needs: compute-tag-proxyd
     uses: celo-org/reusable-workflows/.github/workflows/container-cicd.yaml@v2.0.4
     name: Build proxyd image container on tag
     permissions:
@@ -30,10 +31,42 @@ jobs:
       security-events: write
     with:
       artifact-registry: us-west1-docker.pkg.dev/devopsre/proxyd/proxyd
-      tags: ${{ needs.compute-tag.outputs.modified_tag }}
+      tags: ${{ needs.compute-tag-proxyd.outputs.modified_tag }}
       platforms: linux/amd64
       workload-id-provider: projects/1094498259535/locations/global/workloadIdentityPools/gh-optimism-infra-tag/providers/github-by-repos
       service-account: optimism-infra-tag@devopsre.iam.gserviceaccount.com
       context: .
       file: ./proxyd/Dockerfile
+      trivy: false
+
+  compute-tag-op-conductor-ops:
+    runs-on: 'ubuntu-latest'
+    if: startsWith(github.ref_name, 'op-conductor-ops-')
+    permissions:
+      pull-requests: read
+    outputs:
+      modified_tag: ${{ steps.remove-op-conductor-ops-prefix.outputs.modified_tag }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Remove op-conductor-ops- prefix from tag
+        id: remove-op-conductor-ops-prefix
+        run: echo "::set-output name=modified_tag::$(echo '${{ github.ref_name }}' | sed 's/^op-conductor-ops-//')"
+
+  build-container-op-conductor-ops-tag:
+    needs: compute-tag-op-conductor-ops
+    uses: celo-org/reusable-workflows/.github/workflows/container-cicd.yaml@v2.0.4
+    name: Build op-conductor-ops image container on tag
+    permissions:
+      contents: read
+      id-token: write
+      security-events: write
+    with:
+      artifact-registry: us-west1-docker.pkg.dev/devopsre/op-conductor-ops/op-conductor-ops
+      tags: ${{ needs.compute-tag-op-conductor-ops.outputs.modified_tag }}
+      platforms: linux/amd64
+      workload-id-provider: projects/1094498259535/locations/global/workloadIdentityPools/gh-optimism-infra-tag/providers/github-by-repos
+      service-account: optimism-infra-tag@devopsre.iam.gserviceaccount.com
+      context: .
+      file: ./op-conductor-ops/Dockerfile
       trivy: false
