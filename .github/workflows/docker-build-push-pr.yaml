@@ -1,5 +1,5 @@
 ---
-name: Build and Sign proxyd Container
+name: Build and Sign Containers on PR
 
 on:
   pull_request:
@@ -46,7 +46,7 @@ jobs:
 
   build-container-op-conductor-ops:
     uses: celo-org/reusable-workflows/.github/workflows/container-cicd.yaml@v2.0.4
-    name: Build proxyd image container
+    name: Build op-conductor-ops image container
     needs: detect-files-changed
     if: |
       contains(needs.detect-files-changed.outputs.files-changed, 'op-conductor-ops') ||
