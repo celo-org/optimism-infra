@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - proxyd-v[0-9].[0-9]+.[0-9]+
+      - op-conductor-ops-v[0-9].[0-9]+.[0-9]+
   workflow_dispatch:
 
 jobs:
