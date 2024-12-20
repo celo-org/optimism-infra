@@ -233,6 +233,7 @@ var (
 		"transaction pool is full",
 		"insufficient funds",
 		"replacement underpriced",
+		"replacement transaction underpriced",
 		"already known",
 		"max initcode size exceeded",
 		"insufficient balance",
