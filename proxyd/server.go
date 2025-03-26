@@ -729,7 +729,7 @@ func (s *Server) populateContext(w http.ResponseWriter, r *http.Request) context
 
 	// Check for Valora user agent
 	userAgent := r.Header.Get("User-Agent")
-	isValora := strings.Contains(userAgent, "Valora")
+	isValora := strings.Contains(userAgent, "Valora") || strings.Contains(userAgent, "SheFi") || strings.Contains(userAgent, "cKash")
 	ctx = context.WithValue(ctx, "is_valora", isValora) // nolint:staticcheck
 
 	if len(s.authenticatedPaths) > 0 {
