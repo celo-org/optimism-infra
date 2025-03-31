@@ -6,7 +6,7 @@ Help()
    # Display Help
    echo "Syntax: watch -n <NETWORK>"
    echo "Options:"
-   echo "n     Name of the network to watch. Supported values are alfajores or baklava."
+   echo "n     Name of the network to watch. Supported values are alfajores, baklava or mainnet."
    echo "h     Print this Help."
    echo
 }
@@ -22,12 +22,12 @@ do
 done
 
 if [ -z ${network+x} ]; then
-	echo "-n (network) is compulsory. Supported values are alfajores or baklava."
+	echo "-n (network) is compulsory. Supported values are alfajores, baklava or mainnet"
 	exit 1
 fi
 
-if [[ "${network}" != "alfajores" && "${network}" != "baklava" ]]; then
-    echo "Invalid network: ${network}. Supported values are alfajores or baklava."
+if [[ "${network}" != "alfajores" && "${network}" != "baklava" && "${network}" != "mainnet" ]]; then
+    echo "Invalid network: ${network}. Supported values are alfajores, baklava or mainnet"
     exit 1
 fi
 
