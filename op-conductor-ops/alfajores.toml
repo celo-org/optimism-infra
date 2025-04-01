@@ -15,19 +15,19 @@ sequencers = [
 [sequencers]
 
 [sequencers.a]
-raft_addr = "http://localhost:8001/api/v1/namespaces/alfajores-cel2/services/op-conductor-consensus-0:consensus/proxy/"
+raft_addr = "op-conductor-consensus-0:50050"
 conductor_rpc_url = "http://localhost:8001/api/v1/namespaces/alfajores-cel2/services/op-conductor-rpc-0:rpc/proxy/"
 node_rpc_url = "http://localhost:8001/api/v1/namespaces/alfajores-cel2/services/op-node-sequencer-rpc-0:rpc/proxy/"
 voting = true
 
 [sequencers.b]
-raft_addr = "http://localhost:8001/api/v1/namespaces/alfajores-cel2/services/op-conductor-b-consensus-0:consensus/proxy/"
+raft_addr = "op-conductor-b-consensus-0:50050"
 conductor_rpc_url = "http://localhost:8001/api/v1/namespaces/alfajores-cel2/services/op-conductor-b-rpc-0:rpc/proxy/"
 node_rpc_url = "http://localhost:8001/api/v1/namespaces/alfajores-cel2/services/op-node-sequencer-b-rpc-0:rpc/proxy/"
 voting = true
 
 [sequencers.c]
-raft_addr = "http://localhost:8001/api/v1/namespaces/alfajores-cel2/services/op-conductor-c-consensus-0:consensus/proxy/"
+raft_addr = "op-conductor-c-consensus-0:50050"
 conductor_rpc_url = "http://localhost:8001/api/v1/namespaces/alfajores-cel2/services/op-conductor-c-rpc-0:rpc/proxy/"
 node_rpc_url = "http://localhost:8001/api/v1/namespaces/alfajores-cel2/services/op-node-sequencer-c-rpc-0:rpc/proxy/"
 voting = true

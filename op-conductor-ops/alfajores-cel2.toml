@@ -15,19 +15,19 @@ sequencers = [
 [sequencers]
 
 [sequencers.a]
-raft_addr = "http://op-conductor-consensus-0:50050"
+raft_addr = "op-conductor-consensus-0:50050"
 conductor_rpc_url = "http://op-conductor-rpc-0:8545"
 node_rpc_url = "http://op-node-sequencer-rpc-0:9545"
 voting = true
 
 [sequencers.b]
-raft_addr = "http://op-conductor-b-consensus-0:50050"
+raft_addr = "op-conductor-b-consensus-0:50050"
 conductor_rpc_url = "http://op-conductor-b-rpc-0:8545"
 node_rpc_url = "http://op-node-sequencer-b-rpc-0:9545"
 voting = true
 
 [sequencers.c]
-raft_addr = "http://op-conductor-c-consensus-0:50050"
+raft_addr = "op-conductor-c-consensus-0:50050"
 conductor_rpc_url = "http://op-conductor-c-rpc-0:8545"
 node_rpc_url = "http://op-node-sequencer-c-rpc-0:9545"
 voting = true
