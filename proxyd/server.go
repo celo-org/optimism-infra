@@ -28,6 +28,8 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/cors"
 	"github.com/syndtr/goleveldb/leveldb/opt"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
 )
 
 const (
@@ -49,6 +51,7 @@ const (
 )
 
 var emptyArrayResponse = json.RawMessage("[]")
+var tracer = otel.Tracer("proxyd-server")
 
 type Server struct {
 	BackendGroups          map[string]*BackendGroup
@@ -206,9 +209,17 @@ func NewServer(
 func (s *Server) RPCListenAndServe(host string, port int) error {
 	s.srvMu.Lock()
 	hdlr := mux.NewRouter()
+
+	// Non-instrumented methods
 	hdlr.HandleFunc("/healthz", s.HandleHealthz).Methods("GET")
-	hdlr.HandleFunc("/", s.HandleRPC).Methods("POST")
-	hdlr.HandleFunc("/{authorization}", s.HandleRPC).Methods("POST")
+	// hdlr.HandleFunc("/", s.HandleRPC).Methods("POST")
+	// hdlr.HandleFunc("/{authorization}", s.HandleRPC).Methods("POST")
+
+	// Instrumented methods
+	// hdlr.Handle("/healthz", otelhttp.NewHandler(http.HandlerFunc(s.HandleHealthz), "HealthzHandler")).Methods("GET")
+	hdlr.Handle("/", otelhttp.NewHandler(http.HandlerFunc(s.HandleRPC), "RPCHandler")).Methods("POST")
+	hdlr.Handle("/{authorization}", otelhttp.NewHandler(http.HandlerFunc(s.HandleRPC), "RPCHandler")).Methods("POST")
+
 	c := cors.New(cors.Options{
 		AllowedOrigins: []string{"*"},
 	})
@@ -255,10 +266,17 @@ func (s *Server) Shutdown() {
 }
 
 func (s *Server) HandleHealthz(w http.ResponseWriter, r *http.Request) {
+	// _, span := tracer.Start(r.Context(), "HealthzFunction")
+	// defer span.End()
+
 	_, _ = w.Write([]byte("OK"))
 }
 
 func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
+
+	_, span := tracer.Start(r.Context(), "RPCFunction")
+	defer span.End()
+
 	ctx := s.populateContext(w, r)
 	if ctx == nil {
 		return
@@ -398,6 +416,10 @@ func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBatchRPC(ctx context.Context, reqs []json.RawMessage, isLimited limiterFunc, isBatch bool) ([]*RPCRes, bool, string, error) {
+
+	_, span := tracer.Start(ctx, "BatchRPCFunction")
+	defer span.End()
+
 	// A request set is transformed into groups of batches.
 	// Each batch group maps to a forwarded JSON-RPC batch request (subject to maxUpstreamBatchSize constraints)
 	// A groupID is used to decouple Requests that have duplicate ID so they're not part of the same batch that's

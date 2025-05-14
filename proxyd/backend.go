@@ -11,6 +11,7 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"net/http/httptrace"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,6 +25,8 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/xaionaro-go/weightedshuffle"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -331,7 +334,9 @@ func NewBackend(
 		wsURL:           wsURL,
 		maxResponseSize: math.MaxInt64,
 		client: &LimitedHTTPClient{
-			Client:      http.Client{Timeout: 5 * time.Second},
+			Client: http.Client{
+				Transport: otelhttp.NewTransport(http.DefaultTransport),
+				Timeout:   5 * time.Second},
 			sem:         rpcSemaphore,
 			backendName: name,
 		},
@@ -362,6 +367,9 @@ func (b *Backend) Override(opts ...BackendOpt) {
 }
 
 func (b *Backend) Forward(ctx context.Context, reqs []*RPCReq, isBatch bool) ([]*RPCRes, error) {
+	_, span := tracer.Start(ctx, "ForwardFunction")
+	defer span.End()
+
 	var lastError error
 	// <= to account for the first attempt not technically being
 	// a retry
@@ -461,6 +469,9 @@ func (b *Backend) ProxyWS(clientConn *websocket.Conn, methodWhitelist *StringSet
 
 // ForwardRPC makes a call directly to a backend and populate the response into `res`
 func (b *Backend) ForwardRPC(ctx context.Context, res *RPCRes, id string, method string, params ...any) error {
+	_, span := tracer.Start(ctx, "ForwardRPCFunction")
+	defer span.End()
+
 	jsonParams, err := json.Marshal(params)
 	if err != nil {
 		return err
@@ -490,6 +501,9 @@ func (b *Backend) ForwardRPC(ctx context.Context, res *RPCRes, id string, method
 }
 
 func (b *Backend) doForward(ctx context.Context, rpcReqs []*RPCReq, isBatch bool) ([]*RPCRes, error) {
+	ctx, span := tracer.Start(ctx, "doForwardFunction")
+	defer span.End()
+
 	// we are concerned about network error rates, so we record 1 request independently of how many are in the batch
 	b.networkRequestsSlidingWindow.Incr()
 
@@ -556,6 +570,10 @@ func (b *Backend) doForward(ctx context.Context, rpcReqs []*RPCReq, isBatch bool
 	} else {
 		body = mustMarshalJSON(rpcReqs)
 	}
+
+	// Inject DNS/TLS hooks
+	clientTrace := otelhttptrace.NewClientTrace(ctx)
+	ctx = httptrace.WithClientTrace(ctx, clientTrace)
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", b.rpcURL, bytes.NewReader(body))
 	if err != nil {
@@ -1321,6 +1339,9 @@ type LimitedHTTPClient struct {
 }
 
 func (c *LimitedHTTPClient) DoLimited(req *http.Request) (*http.Response, error) {
+	_, span := tracer.Start(req.Context(), "DoLimitedFunction")
+	defer span.End()
+
 	if err := c.sem.Acquire(req.Context(), 1); err != nil {
 		tooManyRequestErrorsTotal.WithLabelValues(c.backendName).Inc()
 		return nil, wrapErr(err, "too many requests")
