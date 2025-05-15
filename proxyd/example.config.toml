@@ -28,10 +28,13 @@ log_level = "debug"
 url = ""
 
 [tracing]
-# Whether or not to enable Prometheus metrics.
+# Whether or not to enable tracing.
 enabled = true
-# Host for the Prometheus metrics endpoint to listen on.
+# Endpoint for the grafana agent instance (host:port).
 endpoint = "grafana-agent.integration-tests.celo-networks-dev.org:443"
+# Attribute service.name added to all traces.
+service_name = "proxyd-test"
+# Use insecure connection to grafana agent (default is false, if commented).
 # insecure = false
 
 [metrics]

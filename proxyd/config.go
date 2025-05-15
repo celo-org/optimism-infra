@@ -49,9 +49,10 @@ type MetricsConfig struct {
 }
 
 type TracingConfig struct {
-	Enabled  bool   `toml:"enabled"`
-	Endpoint string `toml:"endpoint"`
-	Insecure bool   `toml:"insecure"`
+	Enabled     bool   `toml:"enabled"`
+	Endpoint    string `toml:"endpoint"`
+	ServiceName string `toml:"service_name"`
+	Insecure    bool   `toml:"insecure"`
 }
 
 type RateLimitConfig struct {

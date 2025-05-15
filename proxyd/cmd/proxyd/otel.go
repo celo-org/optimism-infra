@@ -19,7 +19,7 @@ import (
 
 // setupOTelSDK bootstraps the OpenTelemetry pipeline.
 // If it does not return an error, make sure to call shutdown for proper cleanup.
-func setupOTelSDK(ctx context.Context, endpoint string, insecure bool) (shutdown func(context.Context) error, err error) {
+func setupOTelSDK(ctx context.Context, endpoint string, insecure bool, serviceName string) (shutdown func(context.Context) error, err error) {
 	var shutdownFuncs []func(context.Context) error
 
 	// shutdown calls cleanup functions registered via shutdownFuncs.
@@ -44,7 +44,7 @@ func setupOTelSDK(ctx context.Context, endpoint string, insecure bool) (shutdown
 	otel.SetTextMapPropagator(prop)
 
 	// Set up trace provider.
-	tracerProvider, err := newTracerProvider(endpoint, insecure)
+	tracerProvider, err := newTracerProvider(endpoint, insecure, serviceName)
 	if err != nil {
 		handleErr(err)
 		return
@@ -62,7 +62,7 @@ func newPropagator() propagation.TextMapPropagator {
 	)
 }
 
-func newTracerProvider(endpoint string, insecure bool) (*trace.TracerProvider, error) {
+func newTracerProvider(endpoint string, insecure bool, serviceName string) (*trace.TracerProvider, error) {
 	// traceExporter, err := stdouttrace.New(
 	// 	stdouttrace.WithPrettyPrint())
 	// if err != nil {
@@ -97,7 +97,7 @@ func newTracerProvider(endpoint string, insecure bool) (*trace.TracerProvider, e
 		trace.WithResource(resource.NewWithAttributes(
 			// Add resource attributes (e.g., service name)
 			semconv.SchemaURL,
-			attribute.String("service.name", "proxyd"),
+			attribute.String("service.name", serviceName),
 		)),
 	)
 	return tracerProvider, nil
