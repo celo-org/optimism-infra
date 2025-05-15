@@ -30,6 +30,8 @@ import (
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -217,7 +219,12 @@ func (s *Server) RPCListenAndServe(host string, port int) error {
 
 	// Instrumented methods
 	// hdlr.Handle("/healthz", otelhttp.NewHandler(http.HandlerFunc(s.HandleHealthz), "HealthzHandler")).Methods("GET")
-	hdlr.Handle("/", otelhttp.NewHandler(http.HandlerFunc(s.HandleRPC), "RPCHandler")).Methods("POST")
+	hdlr.Handle("/", otelhttp.NewHandler(http.HandlerFunc(s.HandleRPC),
+		"RPCHandler",
+		otelhttp.WithSpanOptions(trace.WithAttributes(
+			attribute.Bool("force_sample", true),
+		)),
+	)).Methods("POST")
 	hdlr.Handle("/{authorization}", otelhttp.NewHandler(http.HandlerFunc(s.HandleRPC), "RPCHandler")).Methods("POST")
 
 	c := cors.New(cors.Options{

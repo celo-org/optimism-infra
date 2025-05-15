@@ -17,6 +17,22 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
 )
 
+// Custom sampler: only sample spans if parent has "force_sample=true" attribute
+type attrBasedSampler struct{}
+
+func (s *attrBasedSampler) ShouldSample(p trace.SamplingParameters) trace.SamplingResult {
+	for _, attr := range p.Attributes {
+		if attr.Key == "force_sample" && attr.Value.AsBool() {
+			return trace.SamplingResult{Decision: trace.RecordAndSample}
+		}
+	}
+	return trace.SamplingResult{Decision: trace.Drop}
+}
+
+func (s *attrBasedSampler) Description() string {
+	return "Sample if parent has force_sample=true"
+}
+
 // setupOTelSDK bootstraps the OpenTelemetry pipeline.
 // If it does not return an error, make sure to call shutdown for proper cleanup.
 func setupOTelSDK(ctx context.Context, endpoint string, insecure bool, serviceName string) (shutdown func(context.Context) error, err error) {
@@ -91,6 +107,7 @@ func newTracerProvider(endpoint string, insecure bool, serviceName string) (*tra
 	}
 
 	tracerProvider := trace.NewTracerProvider(
+		trace.WithSampler(trace.ParentBased(&attrBasedSampler{})),
 		trace.WithBatcher(traceExporter,
 			// Default is 5s. Set to 1s for demonstrative purposes.
 			trace.WithBatchTimeout(time.Second)),
