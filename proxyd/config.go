@@ -48,6 +48,13 @@ type MetricsConfig struct {
 	Port    int    `toml:"port"`
 }
 
+type TracingConfig struct {
+	Enabled     bool   `toml:"enabled"`
+	Endpoint    string `toml:"endpoint"`
+	ServiceName string `toml:"service_name"`
+	Insecure    bool   `toml:"insecure"`
+}
+
 type RateLimitConfig struct {
 	UseRedis         bool                                `toml:"use_redis"`
 	BaseRate         int                                 `toml:"base_rate"`
@@ -211,6 +218,7 @@ type Config struct {
 	RPCMethodMappings     map[string]string     `toml:"rpc_method_mappings"`
 	WSMethodWhitelist     []string              `toml:"ws_method_whitelist"`
 	WhitelistErrorMessage string                `toml:"whitelist_error_message"`
+	Tracing               TracingConfig         `toml:"tracing"`
 	SenderRateLimit       SenderRateLimitConfig `toml:"sender_rate_limit"`
 	SanctionedAddresses   []string              `toml:"sanctioned_addresses"`
 }
