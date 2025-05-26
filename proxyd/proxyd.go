@@ -182,6 +182,7 @@ func Start(config *Config) (*Server, func(), error) {
 		opts = append(opts, WithProxydIP(os.Getenv("PROXYD_IP")))
 		opts = append(opts, WithConsensusSkipPeerCountCheck(cfg.ConsensusSkipPeerCountCheck))
 		opts = append(opts, WithConsensusForcedCandidate(cfg.ConsensusForcedCandidate))
+		opts = append(opts, WithArchive(cfg.Archive))
 		opts = append(opts, WithWeight(cfg.Weight))
 
 		receiptsTarget, err := ReadFromEnvOrConfig(cfg.ConsensusReceiptsTarget)
@@ -316,78 +317,7 @@ func Start(config *Config) (*Server, func(), error) {
 		}
 	}
 
-	srv, err := NewServer(
-		backendGroups,
-		wsBackendGroup,
-		NewStringSetFromStrings(config.WSMethodWhitelist),
-		config.RPCMethodMappings,
-		config.Server.MaxBodySizeBytes,
-		resolvedAuth,
-		secondsToDuration(config.Server.TimeoutSeconds),
-		config.Server.MaxUpstreamBatchSize,
-		config.Server.EnableXServedByHeader,
-		rpcCache,
-		config.RateLimit,
-		config.SenderRateLimit,
-		config.Server.EnableRequestLog,
-		config.Server.MaxRequestBodyLogLen,
-		config.BatchConfig.MaxSize,
-		redisClient,
-		sanctionedAddressesMap,
-	)
-	if err != nil {
-		return nil, nil, fmt.Errorf("error creating server: %w", err)
-	}
-
-	// Enable to support browser websocket connections.
-	// See https://pkg.go.dev/github.com/gorilla/websocket#hdr-Origin_Considerations
-	if config.Server.AllowAllOrigins {
-		srv.upgrader.CheckOrigin = func(r *http.Request) bool {
-			return true
-		}
-	}
-
-	if config.Metrics.Enabled {
-		addr := fmt.Sprintf("%s:%d", config.Metrics.Host, config.Metrics.Port)
-		log.Info("starting metrics server", "addr", addr)
-		go func() {
-			if err := http.ListenAndServe(addr, promhttp.Handler()); err != nil {
-				log.Error("error starting metrics server", "err", err)
-			}
-		}()
-	}
-
-	// To allow integration tests to cleanly come up, wait
-	// 10ms to give the below goroutines enough time to
-	// encounter an error creating their servers
-	errTimer := time.NewTimer(10 * time.Millisecond)
-
-	if config.Server.RPCPort != 0 {
-		go func() {
-			if err := srv.RPCListenAndServe(config.Server.RPCHost, config.Server.RPCPort); err != nil {
-				if errors.Is(err, http.ErrServerClosed) {
-					log.Info("RPC server shut down")
-					return
-				}
-				log.Crit("error starting RPC server", "err", err)
-			}
-		}()
-	}
-
-	if config.Server.WSPort != 0 {
-		go func() {
-			if err := srv.WSListenAndServe(config.Server.WSHost, config.Server.WSPort); err != nil {
-				if errors.Is(err, http.ErrServerClosed) {
-					log.Info("WS server shut down")
-					return
-				}
-				log.Crit("error starting WS server", "err", err)
-			}
-		}()
-	} else {
-		log.Info("WS server not enabled (ws_port is set to 0)")
-	}
-
+	consensusTrackers := make(map[string]ConsensusTracker)
 	for bgName, bg := range backendGroups {
 		bgcfg := config.BackendGroups[bgName]
 
@@ -460,7 +390,81 @@ func Start(config *Config) (*Server, func(), error) {
 			if bgcfg.ConsensusHA {
 				tracker.(*RedisConsensusTracker).Init()
 			}
+			consensusTrackers[bgName] = tracker
 		}
+	}
+
+	srv, err := NewServer(
+		backendGroups,
+		wsBackendGroup,
+		NewStringSetFromStrings(config.WSMethodWhitelist),
+		config.RPCMethodMappings,
+		config.Server.MaxBodySizeBytes,
+		resolvedAuth,
+		secondsToDuration(config.Server.TimeoutSeconds),
+		config.Server.MaxUpstreamBatchSize,
+		config.Server.EnableXServedByHeader,
+		rpcCache,
+		config.RateLimit,
+		config.SenderRateLimit,
+		config.Server.EnableRequestLog,
+		config.Server.MaxRequestBodyLogLen,
+		config.BatchConfig.MaxSize,
+		redisClient,
+		sanctionedAddressesMap,
+		consensusTrackers,
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error creating server: %w", err)
+	}
+
+	// Enable to support browser websocket connections.
+	// See https://pkg.go.dev/github.com/gorilla/websocket#hdr-Origin_Considerations
+	if config.Server.AllowAllOrigins {
+		srv.upgrader.CheckOrigin = func(r *http.Request) bool {
+			return true
+		}
+	}
+
+	if config.Metrics.Enabled {
+		addr := fmt.Sprintf("%s:%d", config.Metrics.Host, config.Metrics.Port)
+		log.Info("starting metrics server", "addr", addr)
+		go func() {
+			if err := http.ListenAndServe(addr, promhttp.Handler()); err != nil {
+				log.Error("error starting metrics server", "err", err)
+			}
+		}()
+	}
+
+	// To allow integration tests to cleanly come up, wait
+	// 10ms to give the below goroutines enough time to
+	// encounter an error creating their servers
+	errTimer := time.NewTimer(10 * time.Millisecond)
+
+	if config.Server.RPCPort != 0 {
+		go func() {
+			if err := srv.RPCListenAndServe(config.Server.RPCHost, config.Server.RPCPort); err != nil {
+				if errors.Is(err, http.ErrServerClosed) {
+					log.Info("RPC server shut down")
+					return
+				}
+				log.Crit("error starting RPC server", "err", err)
+			}
+		}()
+	}
+
+	if config.Server.WSPort != 0 {
+		go func() {
+			if err := srv.WSListenAndServe(config.Server.WSHost, config.Server.WSPort); err != nil {
+				if errors.Is(err, http.ErrServerClosed) {
+					log.Info("WS server shut down")
+					return
+				}
+				log.Crit("error starting WS server", "err", err)
+			}
+		}()
+	} else {
+		log.Info("WS server not enabled (ws_port is set to 0)")
 	}
 
 	<-errTimer.C

@@ -29,6 +29,8 @@ type ServerConfig struct {
 	EnablePprof           bool `toml:"enable_pprof"`
 	EnableXServedByHeader bool `toml:"enable_served_by_header"`
 	AllowAllOrigins       bool `toml:"allow_all_origins"`
+
+	Archive bool `toml:"archive"`
 }
 
 type CacheConfig struct {
@@ -113,6 +115,7 @@ type BackendConfig struct {
 	ConsensusSkipPeerCountCheck bool   `toml:"consensus_skip_peer_count"`
 	ConsensusForcedCandidate    bool   `toml:"consensus_forced_candidate"`
 	ConsensusReceiptsTarget     string `toml:"consensus_receipts_target"`
+	Archive                     bool   `toml:"archive"`
 }
 
 type BackendsConfig map[string]*BackendConfig

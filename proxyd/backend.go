@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/big"
 	"math/rand"
 	"net/http"
 	"net/http/httptrace"
@@ -163,6 +164,7 @@ type Backend struct {
 
 	skipPeerCountCheck bool
 	forcedCandidate    bool
+	archive            bool
 
 	maxDegradedLatencyThreshold time.Duration
 	maxLatencyThreshold         time.Duration
@@ -256,6 +258,12 @@ func WithConsensusSkipPeerCountCheck(skipPeerCountCheck bool) BackendOpt {
 func WithConsensusForcedCandidate(forcedCandidate bool) BackendOpt {
 	return func(b *Backend) {
 		b.forcedCandidate = forcedCandidate
+	}
+}
+
+func WithArchive(archive bool) BackendOpt {
+	return func(b *Backend) {
+		b.archive = archive
 	}
 }
 
@@ -500,6 +508,7 @@ func (b *Backend) ForwardRPC(ctx context.Context, res *RPCRes, id string, method
 	return nil
 }
 
+// TODO(jcortejoso): Move here the logic to handle archive-required requests
 func (b *Backend) doForward(ctx context.Context, rpcReqs []*RPCReq, isBatch bool) ([]*RPCRes, error) {
 	ctx, span := tracer.Start(ctx, "doForwardFunction")
 	defer span.End()
@@ -805,6 +814,64 @@ func (bg *BackendGroup) Forward(ctx context.Context, rpcReqs []*RPCReq, isBatch 
 	if bg.GetRoutingStrategy() == MulticallRoutingStrategy && isValidMulticallTx(rpcReqs) && !isBatch {
 		backendResp := bg.ExecuteMulticall(ctx, rpcReqs)
 		return backendResp.RPCRes, backendResp.ServedBy, backendResp.error
+	}
+
+	// Determine if archive is required
+	archiveRequired := false
+	blockParamIndex := map[string]int{
+		"eth_getBalance":          1,
+		"eth_getCode":             1,
+		"eth_getTransactionCount": 1,
+		"eth_call":                1,
+		"eth_getStorageAt":        2,
+		"eth_getProof":            2,
+	}
+	for _, req := range rpcReqs {
+		idx, ok := blockParamIndex[req.Method]
+		if !ok {
+			continue
+		}
+		var params []interface{}
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			log.Error("error unmarshalling params for archive-aware methods",
+				"req_id", GetReqID(ctx))
+			return nil, "", ErrInvalidRequest("invalid request")
+		}
+		if len(params) <= idx {
+			continue // no block param, skip
+		}
+		blockParam, ok := params[idx].(string)
+		if !ok {
+			continue // block param not a string (i.e.: it's an object as with blockHash)
+		}
+		// "earliest" and "pending" are not rewritten to a block number in rewriteTagBlockNumberOrHash
+		if blockParam == "earliest" {
+			archiveRequired = true
+		} else if blockParam == "pending" {
+			continue
+		} else if strings.HasPrefix(blockParam, "0x") {
+			blockNum, ok := new(big.Int).SetString(blockParam[2:], 16)
+			if !ok {
+				continue // invalid hex
+			}
+			latestBlock := uint64(bg.Consensus.GetLatestBlockNumber())
+			if latestBlock > 0 && blockNum.Uint64() < latestBlock-128 {
+				archiveRequired = true
+			}
+		}
+	}
+
+	// Filter backends based on archive requirement
+	if archiveRequired {
+		var archiveBackends []*Backend
+		for _, backend := range backends {
+			if backend.archive {
+				archiveBackends = append(archiveBackends, backend)
+			}
+		}
+		if len(archiveBackends) > 0 {
+			backends = archiveBackends
+		}
 	}
 
 	rpcRequestsTotal.Inc()
