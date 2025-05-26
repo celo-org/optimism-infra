@@ -872,6 +872,7 @@ func (bg *BackendGroup) Forward(ctx context.Context, rpcReqs []*RPCReq, isBatch 
 		if len(archiveBackends) > 0 {
 			backends = archiveBackends
 		}
+		rpcArchiveRequestsTotal.Inc()
 	}
 
 	rpcRequestsTotal.Inc()
