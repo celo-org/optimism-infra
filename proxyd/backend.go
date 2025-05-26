@@ -1037,6 +1037,15 @@ func (bg *BackendGroup) ProcessMulticallResponses(ch chan *multicallTuple, ctx c
 
 func (bg *BackendGroup) ProxyWS(ctx context.Context, clientConn *websocket.Conn, methodWhitelist *StringSet) (*WSProxier, error) {
 	for _, back := range bg.Backends {
+		if back.archive {
+			log.Debug(
+				"skipping archive backend for WS proxy",
+				"name", back.Name,
+				"req_id", GetReqID(ctx),
+				"auth", GetAuthCtx(ctx),
+			)
+			continue
+		}
 		proxier, err := back.ProxyWS(clientConn, methodWhitelist)
 		if errors.Is(err, ErrBackendOffline) {
 			log.Warn(
