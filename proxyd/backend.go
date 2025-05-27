@@ -36,6 +36,7 @@ const (
 	JSONRPCErrorInternal   = -32000
 	notFoundRpcError       = -32601
 	sanctionedAddressError = -32801
+	blocksInStateFullNode  = 128
 )
 
 var (
@@ -508,7 +509,6 @@ func (b *Backend) ForwardRPC(ctx context.Context, res *RPCRes, id string, method
 	return nil
 }
 
-// TODO(jcortejoso): Move here the logic to handle archive-required requests
 func (b *Backend) doForward(ctx context.Context, rpcReqs []*RPCReq, isBatch bool) ([]*RPCRes, error) {
 	ctx, span := tracer.Start(ctx, "doForwardFunction")
 	defer span.End()
@@ -842,6 +842,7 @@ func (bg *BackendGroup) Forward(ctx context.Context, rpcReqs []*RPCReq, isBatch 
 		}
 		blockParam, ok := params[idx].(string)
 		if !ok {
+			archiveRequired = true
 			continue // block param not a string (i.e.: it's an object as with blockHash)
 		}
 		// "earliest" and "pending" are not rewritten to a block number in rewriteTagBlockNumberOrHash
@@ -855,7 +856,7 @@ func (bg *BackendGroup) Forward(ctx context.Context, rpcReqs []*RPCReq, isBatch 
 				continue // invalid hex
 			}
 			latestBlock := uint64(bg.Consensus.GetLatestBlockNumber())
-			if latestBlock > 0 && blockNum.Uint64() < latestBlock-128 {
+			if latestBlock > 0 && blockNum.Uint64() < latestBlock-blocksInStateFullNode {
 				archiveRequired = true
 			}
 		}

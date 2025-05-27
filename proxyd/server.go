@@ -82,7 +82,6 @@ type Server struct {
 	srvMu                  sync.Mutex
 	rateLimitHeader        string
 	sanctionedAddresses    map[common.Address]struct{}
-	ConsensusTrackers      map[string]ConsensusTracker
 }
 
 type limiterFunc func(method string) bool
@@ -105,7 +104,6 @@ func NewServer(
 	maxBatchSize int,
 	redisClient *redis.Client,
 	sanctionedAddresses map[common.Address]struct{},
-	consensusTrackers map[string]ConsensusTracker,
 ) (*Server, error) {
 	if cache == nil {
 		cache = &NoopRPCCache{}
@@ -207,7 +205,6 @@ func NewServer(
 		limExemptUserAgents:    limExemptUserAgents,
 		rateLimitHeader:        rateLimitHeader,
 		sanctionedAddresses:    sanctionedAddresses,
-		ConsensusTrackers:      consensusTrackers,
 	}, nil
 }
 
