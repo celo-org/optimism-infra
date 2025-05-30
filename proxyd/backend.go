@@ -21,6 +21,7 @@ import (
 
 	sw "github.com/ethereum-optimism/infra/proxyd/pkg/avg-sliding-window"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/gorilla/websocket"
@@ -840,25 +841,20 @@ func (bg *BackendGroup) Forward(ctx context.Context, rpcReqs []*RPCReq, isBatch 
 		if len(params) <= idx {
 			continue // no block param, skip
 		}
-		blockParam, ok := params[idx].(string)
-		if !ok {
-			archiveRequired = true
-			continue // block param not a string (i.e.: it's an object as with blockHash)
-		}
-		// "earliest" and "pending" are not rewritten to a block number in rewriteTagBlockNumberOrHash
-		if blockParam == "earliest" {
-			archiveRequired = true
-		} else if blockParam == "pending" {
+
+		blockParam := extractBlockParameter(params[idx])
+		if blockParam == "" {
+			// Special case: if it's a map with blockHash, assume archive is required
+			if blockParamMap, ok := params[idx].(map[string]interface{}); ok {
+				if _, exists := blockParamMap["blockHash"]; exists {
+					archiveRequired = true
+				}
+			}
 			continue
-		} else if strings.HasPrefix(blockParam, "0x") {
-			blockNum, ok := new(big.Int).SetString(blockParam[2:], 16)
-			if !ok {
-				continue // invalid hex
-			}
-			latestBlock := uint64(bg.Consensus.GetLatestBlockNumber())
-			if latestBlock > 0 && blockNum.Uint64() < latestBlock-blocksInStateFullNode {
-				archiveRequired = true
-			}
+		}
+
+		if requiresArchiveForBlock(blockParam, bg.Consensus.GetLatestBlockNumber()) {
+			archiveRequired = true
 		}
 	}
 
@@ -1613,4 +1609,44 @@ func (bg *BackendGroup) OverwriteConsensusResponses(rpcReqs []*RPCReq, overridde
 		}
 	}
 	return rewrittenReqs, overriddenResponses
+}
+
+// extractBlockParameter extracts a block parameter string from various formats
+func extractBlockParameter(param interface{}) string {
+	// Direct string parameter
+	if blockParamStr, ok := param.(string); ok {
+		return blockParamStr
+	}
+
+	// Object parameter with blockNumber field
+	if blockParamMap, ok := param.(map[string]interface{}); ok {
+		if blockNumber, exists := blockParamMap["blockNumber"]; exists {
+			if blockNumStr, ok := blockNumber.(string); ok {
+				return blockNumStr
+			}
+		}
+	}
+
+	return ""
+}
+
+// requiresArchiveForBlock determines if a block parameter requires an archive node
+func requiresArchiveForBlock(blockParam string, latestBlockNumber hexutil.Uint64) bool {
+	if blockParam == "earliest" {
+		return true
+	}
+	if blockParam == "pending" || blockParam == "latest" {
+		return false
+	}
+	if strings.HasPrefix(blockParam, "0x") {
+		blockNum, ok := new(big.Int).SetString(blockParam[2:], 16)
+		if !ok {
+			return false // invalid hex
+		}
+		latestBlock := uint64(latestBlockNumber)
+		if latestBlock > 0 && blockNum.Uint64() < latestBlock-blocksInStateFullNode {
+			return true
+		}
+	}
+	return false
 }
