@@ -827,7 +827,8 @@ func (bg *BackendGroup) Forward(ctx context.Context, rpcReqs []*RPCReq, isBatch 
 		var params []interface{}
 		if err := json.Unmarshal(req.Params, &params); err != nil {
 			log.Error("error unmarshalling params for archive-aware methods",
-				"req_id", GetReqID(ctx))
+				"req_id", GetReqID(ctx),
+				"error", err)
 			return nil, "", ErrInvalidRequest("invalid request")
 		}
 		if len(params) <= idx {
