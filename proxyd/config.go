@@ -30,6 +30,7 @@ type ServerConfig struct {
 	EnableXServedByHeader bool `toml:"enable_served_by_header"`
 	AllowAllOrigins       bool `toml:"allow_all_origins"`
 
+	// Archive indicates whether the backend supports archive requests
 	Archive bool `toml:"archive"`
 }
 
