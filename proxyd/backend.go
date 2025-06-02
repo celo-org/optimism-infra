@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/big"
 	"math/rand"
 	"net/http"
 	"net/http/httptrace"
@@ -20,6 +21,7 @@ import (
 
 	sw "github.com/ethereum-optimism/infra/proxyd/pkg/avg-sliding-window"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/gorilla/websocket"
@@ -35,6 +37,18 @@ const (
 	JSONRPCErrorInternal   = -32000
 	notFoundRpcError       = -32601
 	sanctionedAddressError = -32801
+	blocksInStateFullNode  = 128
+)
+
+var (
+	blockParamIndex = map[string]int{
+		"eth_getBalance":          1,
+		"eth_getCode":             1,
+		"eth_getTransactionCount": 1,
+		"eth_call":                1,
+		"eth_getStorageAt":        2,
+		"eth_getProof":            2,
+	}
 )
 
 var (
@@ -163,6 +177,7 @@ type Backend struct {
 
 	skipPeerCountCheck bool
 	forcedCandidate    bool
+	archive            bool
 
 	maxDegradedLatencyThreshold time.Duration
 	maxLatencyThreshold         time.Duration
@@ -256,6 +271,12 @@ func WithConsensusSkipPeerCountCheck(skipPeerCountCheck bool) BackendOpt {
 func WithConsensusForcedCandidate(forcedCandidate bool) BackendOpt {
 	return func(b *Backend) {
 		b.forcedCandidate = forcedCandidate
+	}
+}
+
+func WithArchive(archive bool) BackendOpt {
+	return func(b *Backend) {
+		b.archive = archive
 	}
 }
 
@@ -807,6 +828,54 @@ func (bg *BackendGroup) Forward(ctx context.Context, rpcReqs []*RPCReq, isBatch 
 		return backendResp.RPCRes, backendResp.ServedBy, backendResp.error
 	}
 
+	// Determine if archive is required
+	archiveRequired := false
+	for _, req := range rpcReqs {
+		idx, ok := blockParamIndex[req.Method]
+		if !ok {
+			continue
+		}
+		var params []interface{}
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			log.Error("error unmarshalling params for archive-aware methods",
+				"req_id", GetReqID(ctx),
+				"error", err)
+			return nil, "", ErrInvalidRequest("invalid request")
+		}
+		if len(params) <= idx {
+			continue // no block param, skip
+		}
+
+		blockParam := extractBlockParameter(params[idx])
+		if blockParam == "" {
+			// Special case: if it's a map with blockHash, assume archive is required
+			if blockParamMap, ok := params[idx].(map[string]interface{}); ok {
+				if _, exists := blockParamMap["blockHash"]; exists {
+					archiveRequired = true
+				}
+			}
+			continue
+		}
+
+		if requiresArchiveForBlock(blockParam, bg.Consensus.GetLatestBlockNumber()) {
+			archiveRequired = true
+		}
+	}
+
+	// Filter backends based on archive requirement
+	if archiveRequired {
+		var archiveBackends []*Backend
+		for _, backend := range backends {
+			if backend.archive {
+				archiveBackends = append(archiveBackends, backend)
+			}
+		}
+		if len(archiveBackends) > 0 {
+			backends = archiveBackends
+		}
+		rpcArchiveRequestsTotal.Inc()
+	}
+
 	rpcRequestsTotal.Inc()
 
 	ch := make(chan BackendGroupRPCResponse)
@@ -969,6 +1038,15 @@ func (bg *BackendGroup) ProcessMulticallResponses(ch chan *multicallTuple, ctx c
 
 func (bg *BackendGroup) ProxyWS(ctx context.Context, clientConn *websocket.Conn, methodWhitelist *StringSet) (*WSProxier, error) {
 	for _, back := range bg.Backends {
+		if back.archive {
+			log.Debug(
+				"skipping archive backend for WS proxy",
+				"name", back.Name,
+				"req_id", GetReqID(ctx),
+				"auth", GetAuthCtx(ctx),
+			)
+			continue
+		}
 		proxier, err := back.ProxyWS(clientConn, methodWhitelist)
 		if errors.Is(err, ErrBackendOffline) {
 			log.Warn(
@@ -1535,4 +1613,44 @@ func (bg *BackendGroup) OverwriteConsensusResponses(rpcReqs []*RPCReq, overridde
 		}
 	}
 	return rewrittenReqs, overriddenResponses
+}
+
+// extractBlockParameter extracts a block parameter string from various formats
+func extractBlockParameter(param interface{}) string {
+	// Direct string parameter
+	if blockParamStr, ok := param.(string); ok {
+		return blockParamStr
+	}
+
+	// Object parameter with blockNumber field
+	if blockParamMap, ok := param.(map[string]interface{}); ok {
+		if blockNumber, exists := blockParamMap["blockNumber"]; exists {
+			if blockNumStr, ok := blockNumber.(string); ok {
+				return blockNumStr
+			}
+		}
+	}
+
+	return ""
+}
+
+// requiresArchiveForBlock determines if a block parameter requires an archive node
+func requiresArchiveForBlock(blockParam string, latestBlockNumber hexutil.Uint64) bool {
+	if blockParam == "earliest" {
+		return true
+	}
+	if blockParam == "pending" || blockParam == "latest" {
+		return false
+	}
+	if strings.HasPrefix(blockParam, "0x") {
+		blockNum, ok := new(big.Int).SetString(blockParam[2:], 16)
+		if !ok {
+			return false // invalid hex
+		}
+		latestBlock := uint64(latestBlockNumber)
+		if latestBlock > 0 && blockNum.Uint64() <= latestBlock-blocksInStateFullNode {
+			return true
+		}
+	}
+	return false
 }
