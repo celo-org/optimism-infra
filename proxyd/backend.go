@@ -819,14 +819,6 @@ func (bg *BackendGroup) Forward(ctx context.Context, rpcReqs []*RPCReq, isBatch 
 
 	// Determine if archive is required
 	archiveRequired := false
-	blockParamIndex := map[string]int{
-		"eth_getBalance":          1,
-		"eth_getCode":             1,
-		"eth_getTransactionCount": 1,
-		"eth_call":                1,
-		"eth_getStorageAt":        2,
-		"eth_getProof":            2,
-	}
 	for _, req := range rpcReqs {
 		idx, ok := blockParamIndex[req.Method]
 		if !ok {
@@ -835,7 +827,8 @@ func (bg *BackendGroup) Forward(ctx context.Context, rpcReqs []*RPCReq, isBatch 
 		var params []interface{}
 		if err := json.Unmarshal(req.Params, &params); err != nil {
 			log.Error("error unmarshalling params for archive-aware methods",
-				"req_id", GetReqID(ctx))
+				"req_id", GetReqID(ctx),
+				"error", err)
 			return nil, "", ErrInvalidRequest("invalid request")
 		}
 		if len(params) <= idx {
