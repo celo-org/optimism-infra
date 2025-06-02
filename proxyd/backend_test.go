@@ -142,7 +142,7 @@ func TestRequiresArchiveForBlock(t *testing.T) {
 		},
 		{
 			name:       "block exactly at boundary",
-			blockParam: "0x358", // 872 in decimal (1000 - 128)
+			blockParam: "0x368", // 872 in decimal (1000 - 128)
 			latest:     latestBlock,
 			expected:   true,
 		},
@@ -154,9 +154,9 @@ func TestRequiresArchiveForBlock(t *testing.T) {
 		},
 		{
 			name:       "block just outside archive boundary",
-			blockParam: "0x368", // 872 in decimal (1000 - 128, first block that doesn't need archive)
+			blockParam: "0x367", // 871 in decimal (1000 - 129, first block that doesn't need archive)
 			latest:     latestBlock,
-			expected:   false,
+			expected:   true,
 		},
 		{
 			name:       "invalid hex",

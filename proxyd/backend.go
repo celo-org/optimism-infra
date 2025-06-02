@@ -1644,7 +1644,7 @@ func requiresArchiveForBlock(blockParam string, latestBlockNumber hexutil.Uint64
 			return false // invalid hex
 		}
 		latestBlock := uint64(latestBlockNumber)
-		if latestBlock > 0 && blockNum.Uint64() < latestBlock-blocksInStateFullNode {
+		if latestBlock > 0 && blockNum.Uint64() <= latestBlock-blocksInStateFullNode {
 			return true
 		}
 	}
