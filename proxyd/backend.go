@@ -41,6 +41,17 @@ const (
 )
 
 var (
+	blockParamIndex = map[string]int{
+		"eth_getBalance":          1,
+		"eth_getCode":             1,
+		"eth_getTransactionCount": 1,
+		"eth_call":                1,
+		"eth_getStorageAt":        2,
+		"eth_getProof":            2,
+	}
+)
+
+var (
 	ErrParseErr = &RPCErr{
 		Code:          -32700,
 		Message:       "parse error",
