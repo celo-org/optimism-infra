@@ -478,14 +478,14 @@ func (b *Backend) Forward(ctx context.Context, reqs []*RPCReq, isBatch bool) ([]
 	return nil, wrapErr(lastError, "permanent error forwarding request")
 }
 
-func (b *Backend) ProxyWS(clientConn *websocket.Conn, methodWhitelist *StringSet) (*WSProxier, error) {
+func (b *Backend) ProxyWS(clientConn *websocket.Conn, methodWhitelist *StringSet, server *Server) (*WSProxier, error) {
 	backendConn, _, err := b.dialer.Dial(b.wsURL, nil) // nolint:bodyclose
 	if err != nil {
 		return nil, wrapErr(err, "error dialing backend")
 	}
 
 	activeBackendWsConnsGauge.WithLabelValues(b.Name).Inc()
-	return NewWSProxier(b, clientConn, backendConn, methodWhitelist), nil
+	return NewWSProxier(b, clientConn, backendConn, methodWhitelist, server), nil
 }
 
 // ForwardRPC makes a call directly to a backend and populate the response into `res`
@@ -1036,7 +1036,7 @@ func (bg *BackendGroup) ProcessMulticallResponses(ch chan *multicallTuple, ctx c
 	}
 }
 
-func (bg *BackendGroup) ProxyWS(ctx context.Context, clientConn *websocket.Conn, methodWhitelist *StringSet) (*WSProxier, error) {
+func (bg *BackendGroup) ProxyWS(ctx context.Context, clientConn *websocket.Conn, methodWhitelist *StringSet, server *Server) (*WSProxier, error) {
 	for _, back := range bg.Backends {
 		if back.archive {
 			log.Debug(
@@ -1047,7 +1047,7 @@ func (bg *BackendGroup) ProxyWS(ctx context.Context, clientConn *websocket.Conn,
 			)
 			continue
 		}
-		proxier, err := back.ProxyWS(clientConn, methodWhitelist)
+		proxier, err := back.ProxyWS(clientConn, methodWhitelist, server)
 		if errors.Is(err, ErrBackendOffline) {
 			log.Warn(
 				"skipping offline backend",
@@ -1170,9 +1170,10 @@ type WSProxier struct {
 	methodWhitelist *StringSet
 	readTimeout     time.Duration
 	writeTimeout    time.Duration
+	server          *Server
 }
 
-func NewWSProxier(backend *Backend, clientConn, backendConn *websocket.Conn, methodWhitelist *StringSet) *WSProxier {
+func NewWSProxier(backend *Backend, clientConn, backendConn *websocket.Conn, methodWhitelist *StringSet, server *Server) *WSProxier {
 	return &WSProxier{
 		backend:         backend,
 		clientConn:      clientConn,
@@ -1180,6 +1181,7 @@ func NewWSProxier(backend *Backend, clientConn, backendConn *websocket.Conn, met
 		methodWhitelist: methodWhitelist,
 		readTimeout:     defaultWSReadTimeout,
 		writeTimeout:    defaultWSWriteTimeout,
+		server:          server,
 	}
 }
 
@@ -1251,6 +1253,24 @@ func (w *WSProxier) clientPump(ctx context.Context, errC chan error) {
 		if req.Method == "eth_accounts" {
 			msg = mustMarshalJSON(NewRPCRes(req.ID, emptyArrayResponse))
 			RecordRPCForward(ctx, BackendProxyd, "eth_accounts", RPCRequestSourceWS)
+			err = w.writeClientConn(msgType, msg)
+			if err != nil {
+				errC <- err
+				return
+			}
+			continue
+		}
+
+		// Check for sanctioned addresses
+		if err := w.server.CheckSanctionedAddresses(ctx, req); err != nil {
+			log.Info(
+				"request involves sanctioned address",
+				"auth", GetAuthCtx(ctx),
+				"req_id", GetReqID(ctx),
+				"err", err,
+			)
+			msg = mustMarshalJSON(NewRPCErrorRes(req.ID, err))
+			RecordRPCError(ctx, BackendProxyd, req.Method, err)
 			err = w.writeClientConn(msgType, msg)
 			if err != nil {
 				errC <- err
