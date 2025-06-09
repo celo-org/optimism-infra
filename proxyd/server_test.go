@@ -2,15 +2,23 @@ package proxyd
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -73,6 +81,7 @@ func TestProcessTransaction(t *testing.T) {
 		})
 	}
 }
+
 func TestFilterSanctionedAddresses(t *testing.T) {
 	server := &Server{
 		sanctionedAddresses: map[common.Address]struct{}{
@@ -89,20 +98,23 @@ func TestFilterSanctionedAddresses(t *testing.T) {
 		{
 			name: "Sender is sanctioned",
 			req: &RPCReq{
+				Method: "eth_sendRawTransaction",
 				Params: json.RawMessage(`["0x02f87001830872a98084780a4d0a825208944675c7e5baafbffbca748158becba61ef3b0a263875922b6ab7cb7cd80c001a0795c9fc9d70ce247360f99b37dd4ad816a2ebb257571cb78523b4b17d03bc28fa02095ef30e1e1060f7c117cac0ca23e4b676ad6e3500beab4a3a004e20b9fe56b"]`),
 			},
-			expected: ErrSanctionedAddress,
+			expected: ErrNoBackends,
 		},
 		{
 			name: "Recipient is sanctioned",
 			req: &RPCReq{
+				Method: "eth_sendRawTransaction",
 				Params: json.RawMessage(`["0x02f87001830872a98084780a4d0a825208944675c7e5baafbffbca748158becba61ef3b0a263875922b6ab7cb7cd80c001a0795c9fc9d70ce247360f99b37dd4ad816a2ebb257571cb78523b4b17d03bc28fa02095ef30e1e1060f7c117cac0ca23e4b676ad6e3500beab4a3a004e20b9fe56b"]`),
 			},
-			expected: ErrSanctionedAddress,
+			expected: ErrNoBackends,
 		},
 		{
 			name: "Neither sender nor recipient is sanctioned",
 			req: &RPCReq{
+				Method: "eth_sendRawTransaction",
 				Params: json.RawMessage(`["0x02f870010c830f4240847c2b1da682520894f175e95b93a34ae6d0bf7cc978ac5219a8c747f08704d3c18e542c2a80c080a01a0cba457c7ba2f0bcee41060f55d718a4a5f321376d88949abdb853ab65fd4aa0771a3702bfa8635ec64429f5286957c6608bb87577adac1eefc79990a8498bc3"]`),
 			},
 			expected: nil,
@@ -110,6 +122,7 @@ func TestFilterSanctionedAddresses(t *testing.T) {
 		{
 			name: "Create tx with non sanctioned address",
 			req: &RPCReq{
+				Method: "eth_sendRawTransaction",
 				Params: json.RawMessage(fmt.Sprintf(`["%s"]`, makeContractCreationTransaction(t))),
 			},
 			expected: nil,
@@ -142,4 +155,429 @@ func makeContractCreationTransaction(t *testing.T) string {
 	require.NoError(t, err)
 	h := hexutil.Encode(rawTxBytes)
 	return h
+}
+
+func TestCheckSanctionedAddresses(t *testing.T) {
+	sanctionedPkey1 := "0x0000000000000000000000000000000000000000000000000000000000000001"
+	sanctionedPkey2 := "0x0000000000000000000000000000000000000000000000000000000000000002"
+	nonSanctionedPkey1 := "0x0000000000000000000000000000000000000000000000000000000000000003"
+	sanctionedAddr1 := addressFromPrivateKey(t, sanctionedPkey1)
+	sanctionedAddr2 := addressFromPrivateKey(t, sanctionedPkey2)
+	nonSanctionedAddr1 := addressFromPrivateKey(t, nonSanctionedPkey1)
+
+	server := &Server{
+		sanctionedAddresses: map[common.Address]struct{}{
+			sanctionedAddr1: {},
+			sanctionedAddr2: {},
+		},
+	}
+
+	testCases := []struct {
+		name        string
+		method      string
+		rawTx       string
+		expectError bool
+		errorType   error
+	}{
+		{
+			name:        "Non-transaction method should pass",
+			method:      "eth_getBalance",
+			rawTx:       "",
+			expectError: false,
+		},
+		{
+			name:        "Transaction with sanctioned sender should be blocked",
+			method:      "eth_sendRawTransaction",
+			rawTx:       createRawTransactionFromPrivateKey(t, sanctionedPkey1, common.HexToAddress("0x1234567890123456789012345678901234567890")),
+			expectError: true,
+			errorType:   ErrNoBackends,
+		},
+		{
+			name:        "Transaction with sanctioned recipient should be blocked",
+			method:      "eth_sendRawTransaction",
+			rawTx:       createRawTransactionFromPrivateKey(t, nonSanctionedPkey1, sanctionedAddr2),
+			expectError: true,
+			errorType:   ErrNoBackends,
+		},
+		{
+			name:        "Transaction with both sender and recipient sanctioned should be blocked",
+			method:      "eth_sendRawTransaction",
+			rawTx:       createRawTransactionFromPrivateKey(t, sanctionedPkey1, sanctionedAddr2),
+			expectError: true,
+			errorType:   ErrNoBackends,
+		},
+		{
+			name:        "Transaction with neither sender nor recipient sanctioned should pass",
+			method:      "eth_sendRawTransaction",
+			rawTx:       createRawTransactionFromPrivateKey(t, nonSanctionedPkey1, nonSanctionedAddr1),
+			expectError: false,
+		},
+		{
+			name:        "Contract creation transaction with sanctioned sender should be blocked",
+			method:      "eth_sendRawTransaction",
+			rawTx:       createContractCreationFromPrivateKey(t, sanctionedPkey1),
+			expectError: true,
+			errorType:   ErrNoBackends,
+		},
+		{
+			name:        "Contract creation transaction with non-sanctioned sender should pass",
+			method:      "eth_sendRawTransaction",
+			rawTx:       createContractCreationFromPrivateKey(t, nonSanctionedPkey1),
+			expectError: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			testServer := server
+			if strings.Contains(tc.name, "nil sanctioned addresses") {
+				testServer = &Server{sanctionedAddresses: nil}
+			}
+
+			var req *RPCReq
+			if tc.rawTx != "" {
+				req = &RPCReq{
+					Method: tc.method,
+					Params: json.RawMessage(`["` + tc.rawTx + `"]`),
+				}
+			} else {
+				req = &RPCReq{
+					Method: tc.method,
+					Params: json.RawMessage(`[]`),
+				}
+			}
+
+			err := testServer.CheckSanctionedAddresses(context.Background(), req)
+
+			if tc.expectError {
+				assert.Error(t, err)
+				if tc.errorType != nil {
+					assert.Equal(t, tc.errorType, err)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestSanctionedAddressesWebSocketFiltering(t *testing.T) {
+	sanctionedPkey1 := "0x0000000000000000000000000000000000000000000000000000000000000001"
+	sanctionedPkey2 := "0x0000000000000000000000000000000000000000000000000000000000000002"
+	nonSanctionedPkey1 := "0x0000000000000000000000000000000000000000000000000000000000000003"
+	sanctionedAddr1 := addressFromPrivateKey(t, sanctionedPkey1)
+	sanctionedAddr2 := addressFromPrivateKey(t, sanctionedPkey2)
+	nonSanctionedAddr1 := addressFromPrivateKey(t, nonSanctionedPkey1)
+
+	// Create mock backend
+	mockBackend := &TestMockBackend{
+		responses: make(map[string]string),
+	}
+	mockBackend.Start()
+	defer mockBackend.Close()
+
+	// Create server with sanctioned addresses
+	server := &Server{
+		sanctionedAddresses: map[common.Address]struct{}{
+			sanctionedAddr1: {},
+			sanctionedAddr2: {},
+		},
+		wsMethodWhitelist: NewStringSetFromStrings([]string{"eth_sendRawTransaction", "eth_getBalance"}),
+	}
+
+	testCases := []struct {
+		name          string
+		message       string
+		expectBlocked bool
+		expectedError string
+	}{
+		{
+			name: "Transaction with sanctioned sender should be blocked",
+			message: fmt.Sprintf(`{
+				"id": 1,
+				"method": "eth_sendRawTransaction",
+				"params": ["%s"]
+			}`, createRawTransactionFromPrivateKey(t, sanctionedPkey1, nonSanctionedAddr1)),
+			expectBlocked: true,
+			expectedError: "no backend is currently healthy to serve traffic",
+		},
+		{
+			name: "Transaction with sanctioned recipient should be blocked",
+			message: fmt.Sprintf(`{
+				"id": 2,
+				"method": "eth_sendRawTransaction",
+				"params": ["%s"]
+			}`, createRawTransactionFromPrivateKey(t, nonSanctionedPkey1, sanctionedAddr1)),
+			expectBlocked: true,
+			expectedError: "no backend is currently healthy to serve traffic",
+		},
+		{
+			name: "Non-transaction method should pass",
+			message: `{
+				"id": 4,
+				"method": "eth_getBalance",
+				"params": ["0x1234567890123456789012345678901234567890", "latest"]
+			}`,
+			expectBlocked: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// For simplicity, we'll test the CheckSanctionedAddresses function directly
+			// instead of setting up a full WebSocket server
+			var req *RPCReq
+			var err error
+			if strings.Contains(tc.message, "eth_sendRawTransaction") {
+				req, err = ParseRPCReq([]byte(tc.message))
+				require.NoError(t, err)
+
+				checkErr := server.CheckSanctionedAddresses(context.Background(), req)
+
+				if tc.expectBlocked {
+					assert.Error(t, checkErr)
+					assert.Equal(t, ErrNoBackends, checkErr)
+				} else {
+					assert.NoError(t, checkErr)
+				}
+			} else {
+				req, err = ParseRPCReq([]byte(tc.message))
+				require.NoError(t, err)
+
+				checkErr := server.CheckSanctionedAddresses(context.Background(), req)
+				assert.NoError(t, checkErr) // Non-transaction methods should always pass
+			}
+		})
+	}
+}
+
+func TestSanctionedAddressesErrorHandling(t *testing.T) {
+	server := &Server{
+		sanctionedAddresses: map[common.Address]struct{}{
+			common.HexToAddress("0x4838B106FCe9647Bdf1E7877BF73cE8B0BAD5f97"): {},
+		},
+	}
+
+	testCases := []struct {
+		name        string
+		req         *RPCReq
+		expectError bool
+		errorType   error
+	}{
+		{
+			name: "Invalid transaction parameters should return invalid params error",
+			req: &RPCReq{
+				Method: "eth_sendRawTransaction",
+				Params: json.RawMessage(`["invalid_hex"]`),
+			},
+			expectError: true,
+			// The error is actually ErrInvalidParams because "invalid_hex" fails hex decoding
+			errorType: nil, // Don't check specific error type, just that an error occurred
+		},
+		{
+			name: "Missing transaction parameters should return invalid params error",
+			req: &RPCReq{
+				Method: "eth_sendRawTransaction",
+				Params: json.RawMessage(`[]`),
+			},
+			expectError: true,
+		},
+		{
+			name: "Too many transaction parameters should return invalid params error",
+			req: &RPCReq{
+				Method: "eth_sendRawTransaction",
+				Params: json.RawMessage(`["0x02f870010c830f4240847c2b1da682520894f175e95b93a34ae6d0bf7cc978ac5219a8c747f08704d3c18e542c2a80c080a01a0cba457c7ba2f0bcee41060f55d718a4a5f321376d88949abdb853ab65fd4aa0771a3702bfa8635ec64429f5286957c6608bb87577adac1eefc79990a8498bc3", "extra_param"]`),
+			},
+			expectError: true,
+		},
+		{
+			name: "Malformed JSON parameters should return parse error",
+			req: &RPCReq{
+				Method: "eth_sendRawTransaction",
+				Params: json.RawMessage(`["0x123`), // Malformed JSON
+			},
+			expectError: true,
+			errorType:   ErrParseErr,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := server.CheckSanctionedAddresses(context.Background(), tc.req)
+
+			if tc.expectError {
+				assert.Error(t, err)
+				if tc.errorType != nil {
+					assert.Equal(t, tc.errorType, err)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// Mock backend for testing
+type TestMockBackend struct {
+	server    *httptest.Server
+	responses map[string]string
+}
+
+func (m *TestMockBackend) Start() {
+	m.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req map[string]interface{}
+		json.Unmarshal(body, &req)
+
+		method := req["method"].(string)
+		if response, exists := m.responses[method]; exists {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(response))
+		} else {
+			w.WriteHeader(404)
+		}
+	}))
+}
+
+func (m *TestMockBackend) URL() string {
+	return m.server.URL
+}
+
+func (m *TestMockBackend) Close() {
+	if m.server != nil {
+		m.server.Close()
+	}
+}
+
+// Mock WebSocket connection for testing
+type mockWebSocketConn struct {
+	messages chan []byte
+	closed   bool
+}
+
+func (m *mockWebSocketConn) WriteMessage(messageType int, data []byte) error {
+	if m.closed {
+		return websocket.ErrCloseSent
+	}
+	select {
+	case m.messages <- data:
+		return nil
+	default:
+		return errors.New("message buffer full")
+	}
+}
+
+func (m *mockWebSocketConn) ReadMessage() (messageType int, p []byte, err error) {
+	if m.closed {
+		return 0, nil, websocket.ErrCloseSent
+	}
+	select {
+	case msg := <-m.messages:
+		return websocket.TextMessage, msg, nil
+	case <-time.After(time.Second):
+		return 0, nil, errors.New("read timeout")
+	}
+}
+
+func (m *mockWebSocketConn) Close() error {
+	m.closed = true
+	close(m.messages)
+	return nil
+}
+
+func (m *mockWebSocketConn) SetReadLimit(limit int64) {}
+
+func (m *mockWebSocketConn) SetWriteDeadline(t time.Time) error { return nil }
+
+func (m *mockWebSocketConn) SetReadDeadline(t time.Time) error { return nil }
+
+// Helper functions for creating test transactions with specific private keys
+
+// createRawTransactionFromPrivateKey creates a transaction signed with the given private key
+func createRawTransactionFromPrivateKey(t *testing.T, fromPrivateKeyHex string, to common.Address) string {
+	// Remove 0x prefix if present
+	fromPrivateKeyHex = strings.TrimPrefix(fromPrivateKeyHex, "0x")
+
+	// Convert hex string to ECDSA private key
+	privateKeyBytes, err := hex.DecodeString(fromPrivateKeyHex)
+	require.NoError(t, err)
+
+	key, err := crypto.ToECDSA(privateKeyBytes)
+	require.NoError(t, err)
+
+	nonce := uint64(1)
+	gasLimit := uint64(21000)
+	gasPrice := big.NewInt(20000000000)      // 20 gwei
+	value := big.NewInt(1000000000000000000) // 1 ETH
+	chainID := big.NewInt(1)
+
+	tx := types.NewTx(&types.LegacyTx{
+		Nonce:    nonce,
+		To:       &to,
+		Value:    value,
+		Gas:      gasLimit,
+		GasPrice: gasPrice,
+		Data:     nil,
+	})
+
+	signedTx, err := types.SignTx(tx, types.NewEIP155Signer(chainID), key)
+	require.NoError(t, err)
+
+	rawTxBytes, err := signedTx.MarshalBinary()
+	require.NoError(t, err)
+
+	return hexutil.Encode(rawTxBytes)
+}
+
+// createContractCreationFromPrivateKey creates a contract creation transaction signed with the given private key
+func createContractCreationFromPrivateKey(t *testing.T, privateKeyHex string) string {
+	// Remove 0x prefix if present
+	privateKeyHex = strings.TrimPrefix(privateKeyHex, "0x")
+
+	// Convert hex string to ECDSA private key
+	privateKeyBytes, err := hex.DecodeString(privateKeyHex)
+	require.NoError(t, err)
+
+	key, err := crypto.ToECDSA(privateKeyBytes)
+	require.NoError(t, err)
+
+	nonce := uint64(1)
+	gasLimit := uint64(500000)
+	gasPrice := big.NewInt(20000000000) // 20 gwei
+	value := big.NewInt(0)
+	chainID := big.NewInt(1)
+	data := []byte{0x60, 0x60, 0x60, 0x40} // Simple contract bytecode
+
+	tx := types.NewTx(&types.LegacyTx{
+		Nonce:    nonce,
+		To:       nil, // Contract creation
+		Value:    value,
+		Gas:      gasLimit,
+		GasPrice: gasPrice,
+		Data:     data,
+	})
+
+	signedTx, err := types.SignTx(tx, types.NewEIP155Signer(chainID), key)
+	require.NoError(t, err)
+
+	rawTxBytes, err := signedTx.MarshalBinary()
+	require.NoError(t, err)
+
+	return hexutil.Encode(rawTxBytes)
+}
+
+// addressFromPrivateKey derives the Ethereum address from a private key hex string
+func addressFromPrivateKey(t *testing.T, privateKeyHex string) common.Address {
+	// Remove 0x prefix if present
+	privateKeyHex = strings.TrimPrefix(privateKeyHex, "0x")
+
+	// Convert hex string to ECDSA private key
+	privateKeyBytes, err := hex.DecodeString(privateKeyHex)
+	require.NoError(t, err)
+
+	key, err := crypto.ToECDSA(privateKeyBytes)
+	require.NoError(t, err)
+
+	// Derive the address from the public key
+	return crypto.PubkeyToAddress(key.PublicKey)
 }

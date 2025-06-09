@@ -635,7 +635,7 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	clientConn.SetReadLimit(s.maxBodySize)
 
-	proxier, err := s.wsBackendGroup.ProxyWS(ctx, clientConn, s.wsMethodWhitelist)
+	proxier, err := s.wsBackendGroup.ProxyWS(ctx, clientConn, s.wsMethodWhitelist, s)
 	if err != nil {
 		if errors.Is(err, ErrNoBackends) {
 			RecordUnserviceableRequest(ctx, RPCRequestSourceWS)
@@ -752,7 +752,12 @@ func (s *Server) processTransaction(ctx context.Context, req *RPCReq) (*types.Tr
 	return tx, &from, nil
 }
 
-func (s *Server) filterSanctionedAddresses(ctx context.Context, req *RPCReq) error {
+// CheckSanctionedAddresses checks if a request involves any sanctioned addresses
+func (s *Server) CheckSanctionedAddresses(ctx context.Context, req *RPCReq) error {
+	if req.Method != "eth_sendRawTransaction" || s.sanctionedAddresses == nil {
+		return nil
+	}
+
 	tx, from, err := s.processTransaction(ctx, req)
 	if err != nil {
 		return err
@@ -760,18 +765,22 @@ func (s *Server) filterSanctionedAddresses(ctx context.Context, req *RPCReq) err
 
 	if _, ok := s.sanctionedAddresses[*from]; ok {
 		log.Debug("sender is sanctioned", "sender", from, "req_id", GetReqID(ctx))
-		return ErrSanctionedAddress
+		return ErrNoBackends
 	}
 	to := tx.To()
 	// Create transactions do not have a "to" address so in this case "to" can be nil.
 	if to != nil {
 		if _, ok := s.sanctionedAddresses[*to]; ok {
 			log.Debug("recipient is sanctioned", "recipient", to, "req_id", GetReqID(ctx))
-			return ErrSanctionedAddress
+			return ErrNoBackends
 		}
 	}
 
 	return nil
+}
+
+func (s *Server) filterSanctionedAddresses(ctx context.Context, req *RPCReq) error {
+	return s.CheckSanctionedAddresses(ctx, req)
 }
 
 func (s *Server) rateLimitSender(ctx context.Context, req *RPCReq) error {
