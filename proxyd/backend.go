@@ -857,7 +857,7 @@ func (bg *BackendGroup) Forward(ctx context.Context, rpcReqs []*RPCReq, isBatch 
 			continue
 		}
 
-		if requiresArchiveForBlock(blockParam, bg.Consensus.GetLatestBlockNumber()) {
+		if bg.Consensus != nil && requiresArchiveForBlock(blockParam, bg.Consensus.GetLatestBlockNumber()) {
 			archiveRequired = true
 		}
 	}
