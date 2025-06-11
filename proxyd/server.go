@@ -19,7 +19,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
@@ -29,6 +28,10 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/cors"
 	"github.com/syndtr/goleveldb/leveldb/opt"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -50,6 +53,7 @@ const (
 )
 
 var emptyArrayResponse = json.RawMessage("[]")
+var tracer = otel.Tracer("proxyd-server")
 
 type Server struct {
 	BackendGroups          map[string]*BackendGroup
@@ -207,9 +211,22 @@ func NewServer(
 func (s *Server) RPCListenAndServe(host string, port int) error {
 	s.srvMu.Lock()
 	hdlr := mux.NewRouter()
+
+	// Non-instrumented methods
 	hdlr.HandleFunc("/healthz", s.HandleHealthz).Methods("GET")
-	hdlr.HandleFunc("/", s.HandleRPC).Methods("POST")
-	hdlr.HandleFunc("/{authorization}", s.HandleRPC).Methods("POST")
+	// hdlr.HandleFunc("/", s.HandleRPC).Methods("POST")
+	// hdlr.HandleFunc("/{authorization}", s.HandleRPC).Methods("POST")
+
+	// Instrumented methods
+	// hdlr.Handle("/healthz", otelhttp.NewHandler(http.HandlerFunc(s.HandleHealthz), "HealthzHandler")).Methods("GET")
+	hdlr.Handle("/", otelhttp.NewHandler(http.HandlerFunc(s.HandleRPC),
+		"RPCHandler",
+		otelhttp.WithSpanOptions(trace.WithAttributes(
+			attribute.Bool("force_sample", true),
+		)),
+	)).Methods("POST")
+	hdlr.Handle("/{authorization}", otelhttp.NewHandler(http.HandlerFunc(s.HandleRPC), "RPCHandler")).Methods("POST")
+
 	c := cors.New(cors.Options{
 		AllowedOrigins: []string{"*"},
 	})
@@ -256,10 +273,17 @@ func (s *Server) Shutdown() {
 }
 
 func (s *Server) HandleHealthz(w http.ResponseWriter, r *http.Request) {
+	// _, span := tracer.Start(r.Context(), "HealthzFunction")
+	// defer span.End()
+
 	_, _ = w.Write([]byte("OK"))
 }
 
 func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
+
+	_, span := tracer.Start(r.Context(), "RPCFunction")
+	defer span.End()
+
 	ctx := s.populateContext(w, r)
 	if ctx == nil {
 		return
@@ -305,7 +329,7 @@ func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
 		return !ok
 	}
 
-	log.Info(
+	log.Debug(
 		"received RPC request",
 		"req_id", GetReqID(ctx),
 		"auth", GetAuthCtx(ctx),
@@ -399,6 +423,10 @@ func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBatchRPC(ctx context.Context, reqs []json.RawMessage, isLimited limiterFunc, isBatch bool) ([]*RPCRes, bool, string, error) {
+
+	_, span := tracer.Start(ctx, "BatchRPCFunction")
+	defer span.End()
+
 	// A request set is transformed into groups of batches.
 	// Each batch group maps to a forwarded JSON-RPC batch request (subject to maxUpstreamBatchSize constraints)
 	// A groupID is used to decouple Requests that have duplicate ID so they're not part of the same batch that's
@@ -461,7 +489,7 @@ func (s *Server) handleBatchRPC(ctx context.Context, reqs []json.RawMessage, isL
 
 		// Take base rate limit first
 		if isLimited("") {
-			log.Info(
+			log.Debug(
 				"rate limited individual RPC in a batch request",
 				"source", "rpc",
 				"req_id", parsedReq.ID,
@@ -474,7 +502,7 @@ func (s *Server) handleBatchRPC(ctx context.Context, reqs []json.RawMessage, isL
 
 		// Take rate limit for specific methods.
 		if _, ok := s.overrideLims[parsedReq.Method]; ok && isLimited(parsedReq.Method) {
-			log.Info(
+			log.Debug(
 				"rate limited specific RPC",
 				"source", "rpc",
 				"req_id", GetReqID(ctx),
@@ -607,7 +635,7 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	clientConn.SetReadLimit(s.maxBodySize)
 
-	proxier, err := s.wsBackendGroup.ProxyWS(ctx, clientConn, s.wsMethodWhitelist)
+	proxier, err := s.wsBackendGroup.ProxyWS(ctx, clientConn, s.wsMethodWhitelist, s)
 	if err != nil {
 		if errors.Is(err, ErrNoBackends) {
 			RecordUnserviceableRequest(ctx, RPCRequestSourceWS)
@@ -690,7 +718,7 @@ func (s *Server) isGlobalLimit(method string) bool {
 	return s.globallyLimitedMethods[method]
 }
 
-func (s *Server) processTransaction(ctx context.Context, req *RPCReq) (*types.Transaction, *core.Message, error) {
+func (s *Server) processTransaction(ctx context.Context, req *RPCReq) (*types.Transaction, *common.Address, error) {
 	var params []string
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		log.Debug("error unmarshalling raw transaction params", "err", err, "req_Id", GetReqID(ctx))
@@ -714,37 +742,49 @@ func (s *Server) processTransaction(ctx context.Context, req *RPCReq) (*types.Tr
 		return nil, nil, ErrInvalidParams(err.Error())
 	}
 
-	msg, err := core.TransactionToMessage(tx, types.LatestSignerForChainID(tx.ChainId()), nil)
+	signer := types.LatestSignerForChainID(tx.ChainId())
+	from, err := types.Sender(signer, tx)
 	if err != nil {
-		log.Debug("could not get message from transaction", "err", err, "req_id", GetReqID(ctx))
+		log.Debug("could not get sender from transaction with LatestSignerForChainID", "err", err, "req_id", GetReqID(ctx))
 		return nil, nil, ErrInvalidParams(err.Error())
 	}
 
-	return tx, msg, nil
+	return tx, &from, nil
 }
 
-func (s *Server) filterSanctionedAddresses(ctx context.Context, req *RPCReq) error {
-	tx, msg, err := s.processTransaction(ctx, req)
+// CheckSanctionedAddresses checks if a request involves any sanctioned addresses
+func (s *Server) CheckSanctionedAddresses(ctx context.Context, req *RPCReq) error {
+	if req.Method != "eth_sendRawTransaction" || s.sanctionedAddresses == nil {
+		return nil
+	}
+
+	tx, from, err := s.processTransaction(ctx, req)
 	if err != nil {
 		return err
 	}
 
-	from := msg.From
-	to := *tx.To()
-
-	if _, ok := s.sanctionedAddresses[from]; ok {
+	if _, ok := s.sanctionedAddresses[*from]; ok {
 		log.Debug("sender is sanctioned", "sender", from, "req_id", GetReqID(ctx))
-		return ErrSanctionedAddress
-	} else if _, ok := s.sanctionedAddresses[to]; ok {
-		log.Debug("recipient is sanctioned", "recipient", to, "req_id", GetReqID(ctx))
-		return ErrSanctionedAddress
+		return ErrNoBackends
+	}
+	to := tx.To()
+	// Create transactions do not have a "to" address so in this case "to" can be nil.
+	if to != nil {
+		if _, ok := s.sanctionedAddresses[*to]; ok {
+			log.Debug("recipient is sanctioned", "recipient", to, "req_id", GetReqID(ctx))
+			return ErrNoBackends
+		}
 	}
 
 	return nil
 }
 
+func (s *Server) filterSanctionedAddresses(ctx context.Context, req *RPCReq) error {
+	return s.CheckSanctionedAddresses(ctx, req)
+}
+
 func (s *Server) rateLimitSender(ctx context.Context, req *RPCReq) error {
-	tx, msg, err := s.processTransaction(ctx, req)
+	tx, from, err := s.processTransaction(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -754,13 +794,13 @@ func (s *Server) rateLimitSender(ctx context.Context, req *RPCReq) error {
 		return txpool.ErrInvalidSender
 	}
 
-	ok, err := s.senderLim.Take(ctx, fmt.Sprintf("%s:%d", msg.From.Hex(), tx.Nonce()))
+	ok, err := s.senderLim.Take(ctx, fmt.Sprintf("%s:%d", from.Hex(), tx.Nonce()))
 	if err != nil {
 		log.Error("error taking from sender limiter", "err", err, "req_id", GetReqID(ctx))
 		return ErrInternal
 	}
 	if !ok {
-		log.Debug("sender rate limit exceeded", "sender", msg.From.Hex(), "req_id", GetReqID(ctx))
+		log.Debug("sender rate limit exceeded", "sender", from.Hex(), "req_id", GetReqID(ctx))
 		return ErrOverSenderRateLimit
 	}
 

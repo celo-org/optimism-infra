@@ -4,3 +4,7 @@
 coverage.out
 
 bin/
+**/__pycache__/
+op-conductor-ops/alvaro-op-stack.toml
+op-conductor-ops/watch-alvaro.sh
+proxyd/alvaro.config.toml

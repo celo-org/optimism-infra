@@ -9,21 +9,26 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/big"
 	"math/rand"
 	"net/http"
+	"net/http/httptrace"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	sw "github.com/ethereum-optimism/optimism/proxyd/pkg/avg-sliding-window"
+	sw "github.com/ethereum-optimism/infra/proxyd/pkg/avg-sliding-window"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/gorilla/websocket"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/xaionaro-go/weightedshuffle"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -32,6 +37,18 @@ const (
 	JSONRPCErrorInternal   = -32000
 	notFoundRpcError       = -32601
 	sanctionedAddressError = -32801
+	blocksInStateFullNode  = 128
+)
+
+var (
+	blockParamIndex = map[string]int{
+		"eth_getBalance":          1,
+		"eth_getCode":             1,
+		"eth_getTransactionCount": 1,
+		"eth_call":                1,
+		"eth_getStorageAt":        2,
+		"eth_getProof":            2,
+	}
 )
 
 var (
@@ -57,7 +74,7 @@ var (
 	}
 	ErrNoBackends = &RPCErr{
 		Code:          JSONRPCErrorInternal - 11,
-		Message:       "no backends available for method",
+		Message:       "no backend is currently healthy to serve traffic",
 		HTTPErrorCode: 503,
 	}
 	ErrBackendOverCapacity = &RPCErr{
@@ -160,6 +177,7 @@ type Backend struct {
 
 	skipPeerCountCheck bool
 	forcedCandidate    bool
+	archive            bool
 
 	maxDegradedLatencyThreshold time.Duration
 	maxLatencyThreshold         time.Duration
@@ -256,6 +274,12 @@ func WithConsensusForcedCandidate(forcedCandidate bool) BackendOpt {
 	}
 }
 
+func WithArchive(archive bool) BackendOpt {
+	return func(b *Backend) {
+		b.archive = archive
+	}
+}
+
 func WithWeight(weight int) BackendOpt {
 	return func(b *Backend) {
 		b.weight = weight
@@ -331,7 +355,9 @@ func NewBackend(
 		wsURL:           wsURL,
 		maxResponseSize: math.MaxInt64,
 		client: &LimitedHTTPClient{
-			Client:      http.Client{Timeout: 5 * time.Second},
+			Client: http.Client{
+				Transport: otelhttp.NewTransport(http.DefaultTransport),
+				Timeout:   5 * time.Second},
 			sem:         rpcSemaphore,
 			backendName: name,
 		},
@@ -362,6 +388,9 @@ func (b *Backend) Override(opts ...BackendOpt) {
 }
 
 func (b *Backend) Forward(ctx context.Context, reqs []*RPCReq, isBatch bool) ([]*RPCRes, error) {
+	_, span := tracer.Start(ctx, "ForwardFunction")
+	defer span.End()
+
 	var lastError error
 	// <= to account for the first attempt not technically being
 	// a retry
@@ -449,18 +478,21 @@ func (b *Backend) Forward(ctx context.Context, reqs []*RPCReq, isBatch bool) ([]
 	return nil, wrapErr(lastError, "permanent error forwarding request")
 }
 
-func (b *Backend) ProxyWS(clientConn *websocket.Conn, methodWhitelist *StringSet) (*WSProxier, error) {
+func (b *Backend) ProxyWS(clientConn *websocket.Conn, methodWhitelist *StringSet, server *Server) (*WSProxier, error) {
 	backendConn, _, err := b.dialer.Dial(b.wsURL, nil) // nolint:bodyclose
 	if err != nil {
 		return nil, wrapErr(err, "error dialing backend")
 	}
 
 	activeBackendWsConnsGauge.WithLabelValues(b.Name).Inc()
-	return NewWSProxier(b, clientConn, backendConn, methodWhitelist), nil
+	return NewWSProxier(b, clientConn, backendConn, methodWhitelist, server), nil
 }
 
 // ForwardRPC makes a call directly to a backend and populate the response into `res`
 func (b *Backend) ForwardRPC(ctx context.Context, res *RPCRes, id string, method string, params ...any) error {
+	_, span := tracer.Start(ctx, "ForwardRPCFunction")
+	defer span.End()
+
 	jsonParams, err := json.Marshal(params)
 	if err != nil {
 		return err
@@ -490,6 +522,9 @@ func (b *Backend) ForwardRPC(ctx context.Context, res *RPCRes, id string, method
 }
 
 func (b *Backend) doForward(ctx context.Context, rpcReqs []*RPCReq, isBatch bool) ([]*RPCRes, error) {
+	ctx, span := tracer.Start(ctx, "doForwardFunction")
+	defer span.End()
+
 	// we are concerned about network error rates, so we record 1 request independently of how many are in the batch
 	b.networkRequestsSlidingWindow.Incr()
 
@@ -556,6 +591,10 @@ func (b *Backend) doForward(ctx context.Context, rpcReqs []*RPCReq, isBatch bool
 	} else {
 		body = mustMarshalJSON(rpcReqs)
 	}
+
+	// Inject DNS/TLS hooks
+	clientTrace := otelhttptrace.NewClientTrace(ctx)
+	ctx = httptrace.WithClientTrace(ctx, clientTrace)
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", b.rpcURL, bytes.NewReader(body))
 	if err != nil {
@@ -789,6 +828,54 @@ func (bg *BackendGroup) Forward(ctx context.Context, rpcReqs []*RPCReq, isBatch 
 		return backendResp.RPCRes, backendResp.ServedBy, backendResp.error
 	}
 
+	// Determine if archive is required
+	archiveRequired := false
+	for _, req := range rpcReqs {
+		idx, ok := blockParamIndex[req.Method]
+		if !ok {
+			continue
+		}
+		var params []interface{}
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			log.Error("error unmarshalling params for archive-aware methods",
+				"req_id", GetReqID(ctx),
+				"error", err)
+			return nil, "", ErrInvalidRequest("invalid request")
+		}
+		if len(params) <= idx {
+			continue // no block param, skip
+		}
+
+		blockParam := extractBlockParameter(params[idx])
+		if blockParam == "" {
+			// Special case: if it's a map with blockHash, assume archive is required
+			if blockParamMap, ok := params[idx].(map[string]interface{}); ok {
+				if _, exists := blockParamMap["blockHash"]; exists {
+					archiveRequired = true
+				}
+			}
+			continue
+		}
+
+		if bg.Consensus != nil && requiresArchiveForBlock(blockParam, bg.Consensus.GetLatestBlockNumber()) {
+			archiveRequired = true
+		}
+	}
+
+	// Filter backends based on archive requirement
+	if archiveRequired {
+		var archiveBackends []*Backend
+		for _, backend := range backends {
+			if backend.archive {
+				archiveBackends = append(archiveBackends, backend)
+			}
+		}
+		if len(archiveBackends) > 0 {
+			backends = archiveBackends
+		}
+		rpcArchiveRequestsTotal.Inc()
+	}
+
 	rpcRequestsTotal.Inc()
 
 	ch := make(chan BackendGroupRPCResponse)
@@ -949,9 +1036,18 @@ func (bg *BackendGroup) ProcessMulticallResponses(ch chan *multicallTuple, ctx c
 	}
 }
 
-func (bg *BackendGroup) ProxyWS(ctx context.Context, clientConn *websocket.Conn, methodWhitelist *StringSet) (*WSProxier, error) {
+func (bg *BackendGroup) ProxyWS(ctx context.Context, clientConn *websocket.Conn, methodWhitelist *StringSet, server *Server) (*WSProxier, error) {
 	for _, back := range bg.Backends {
-		proxier, err := back.ProxyWS(clientConn, methodWhitelist)
+		if back.archive {
+			log.Debug(
+				"skipping archive backend for WS proxy",
+				"name", back.Name,
+				"req_id", GetReqID(ctx),
+				"auth", GetAuthCtx(ctx),
+			)
+			continue
+		}
+		proxier, err := back.ProxyWS(clientConn, methodWhitelist, server)
 		if errors.Is(err, ErrBackendOffline) {
 			log.Warn(
 				"skipping offline backend",
@@ -1074,9 +1170,10 @@ type WSProxier struct {
 	methodWhitelist *StringSet
 	readTimeout     time.Duration
 	writeTimeout    time.Duration
+	server          *Server
 }
 
-func NewWSProxier(backend *Backend, clientConn, backendConn *websocket.Conn, methodWhitelist *StringSet) *WSProxier {
+func NewWSProxier(backend *Backend, clientConn, backendConn *websocket.Conn, methodWhitelist *StringSet, server *Server) *WSProxier {
 	return &WSProxier{
 		backend:         backend,
 		clientConn:      clientConn,
@@ -1084,6 +1181,7 @@ func NewWSProxier(backend *Backend, clientConn, backendConn *websocket.Conn, met
 		methodWhitelist: methodWhitelist,
 		readTimeout:     defaultWSReadTimeout,
 		writeTimeout:    defaultWSWriteTimeout,
+		server:          server,
 	}
 }
 
@@ -1155,6 +1253,24 @@ func (w *WSProxier) clientPump(ctx context.Context, errC chan error) {
 		if req.Method == "eth_accounts" {
 			msg = mustMarshalJSON(NewRPCRes(req.ID, emptyArrayResponse))
 			RecordRPCForward(ctx, BackendProxyd, "eth_accounts", RPCRequestSourceWS)
+			err = w.writeClientConn(msgType, msg)
+			if err != nil {
+				errC <- err
+				return
+			}
+			continue
+		}
+
+		// Check for sanctioned addresses
+		if err := w.server.CheckSanctionedAddresses(ctx, req); err != nil {
+			log.Info(
+				"request involves sanctioned address",
+				"auth", GetAuthCtx(ctx),
+				"req_id", GetReqID(ctx),
+				"err", err,
+			)
+			msg = mustMarshalJSON(NewRPCErrorRes(req.ID, err))
+			RecordRPCError(ctx, BackendProxyd, req.Method, err)
 			err = w.writeClientConn(msgType, msg)
 			if err != nil {
 				errC <- err
@@ -1321,6 +1437,9 @@ type LimitedHTTPClient struct {
 }
 
 func (c *LimitedHTTPClient) DoLimited(req *http.Request) (*http.Response, error) {
+	_, span := tracer.Start(req.Context(), "DoLimitedFunction")
+	defer span.End()
+
 	if err := c.sem.Acquire(req.Context(), 1); err != nil {
 		tooManyRequestErrorsTotal.WithLabelValues(c.backendName).Inc()
 		return nil, wrapErr(err, "too many requests")
@@ -1336,7 +1455,7 @@ func RecordBatchRPCError(ctx context.Context, backendName string, reqs []*RPCReq
 }
 
 func MaybeRecordErrorsInRPCRes(ctx context.Context, backendName string, reqs []*RPCReq, resBatch []*RPCRes) {
-	log.Info("forwarded RPC request",
+	log.Debug("forwarded RPC request",
 		"backend", backendName,
 		"auth", GetAuthCtx(ctx),
 		"req_id", GetReqID(ctx),
@@ -1514,4 +1633,44 @@ func (bg *BackendGroup) OverwriteConsensusResponses(rpcReqs []*RPCReq, overridde
 		}
 	}
 	return rewrittenReqs, overriddenResponses
+}
+
+// extractBlockParameter extracts a block parameter string from various formats
+func extractBlockParameter(param interface{}) string {
+	// Direct string parameter
+	if blockParamStr, ok := param.(string); ok {
+		return blockParamStr
+	}
+
+	// Object parameter with blockNumber field
+	if blockParamMap, ok := param.(map[string]interface{}); ok {
+		if blockNumber, exists := blockParamMap["blockNumber"]; exists {
+			if blockNumStr, ok := blockNumber.(string); ok {
+				return blockNumStr
+			}
+		}
+	}
+
+	return ""
+}
+
+// requiresArchiveForBlock determines if a block parameter requires an archive node
+func requiresArchiveForBlock(blockParam string, latestBlockNumber hexutil.Uint64) bool {
+	if blockParam == "earliest" {
+		return true
+	}
+	if blockParam == "pending" || blockParam == "latest" {
+		return false
+	}
+	if strings.HasPrefix(blockParam, "0x") {
+		blockNum, ok := new(big.Int).SetString(blockParam[2:], 16)
+		if !ok {
+			return false // invalid hex
+		}
+		latestBlock := uint64(latestBlockNumber)
+		if latestBlock > 0 && blockNum.Uint64() <= latestBlock-blocksInStateFullNode {
+			return true
+		}
+	}
+	return false
 }

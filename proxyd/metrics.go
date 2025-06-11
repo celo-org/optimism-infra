@@ -36,6 +36,12 @@ var (
 		Help:      "Count of total client RPC requests.",
 	})
 
+	rpcArchiveRequestsTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: MetricsNamespace,
+		Name:      "rpc_archive_requests_total",
+		Help:      "Count of total client RPC requests that require archive data.",
+	})
+
 	rpcForwardsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: MetricsNamespace,
 		Name:      "rpc_forwards_total",

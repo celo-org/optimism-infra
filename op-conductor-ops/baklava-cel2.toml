@@ -1,0 +1,33 @@
+# Path to the SSL/TLS certificate file
+#cert_path = "./cacert.pem"
+
+# Network configurations
+[networks]
+
+[networks.baklava-cel2]
+sequencers = [
+    "0",
+    "1",
+    "2",
+]
+
+# Sequencer configurations
+[sequencers]
+
+[sequencers.0]
+raft_addr = "op-conductor-consensus-0:50050"
+conductor_rpc_url = "http://op-conductor-rpc-0:8545"
+node_rpc_url = "http://op-node-sequencer-rpc-0:9545"
+voting = true
+
+[sequencers.1]
+raft_addr = "op-conductor-consensus-1:50050"
+conductor_rpc_url = "http://op-conductor-rpc-1:8545"
+node_rpc_url = "http://op-node-sequencer-rpc-1:9545"
+voting = true
+
+[sequencers.2]
+raft_addr = "op-conductor-consensus-2:50050"
+conductor_rpc_url = "http://op-conductor-rpc-2:8545"
+node_rpc_url = "http://op-node-sequencer-rpc-2:9545"
+voting = true

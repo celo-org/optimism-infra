@@ -29,6 +29,9 @@ type ServerConfig struct {
 	EnablePprof           bool `toml:"enable_pprof"`
 	EnableXServedByHeader bool `toml:"enable_served_by_header"`
 	AllowAllOrigins       bool `toml:"allow_all_origins"`
+
+	// Archive indicates whether the backend supports archive requests
+	Archive bool `toml:"archive"`
 }
 
 type CacheConfig struct {
@@ -39,12 +42,20 @@ type CacheConfig struct {
 type RedisConfig struct {
 	URL       string `toml:"url"`
 	Namespace string `toml:"namespace"`
+	ReadURL   string `toml:"read_url"`
 }
 
 type MetricsConfig struct {
 	Enabled bool   `toml:"enabled"`
 	Host    string `toml:"host"`
 	Port    int    `toml:"port"`
+}
+
+type TracingConfig struct {
+	Enabled     bool   `toml:"enabled"`
+	Endpoint    string `toml:"endpoint"`
+	ServiceName string `toml:"service_name"`
+	Insecure    bool   `toml:"insecure"`
 }
 
 type RateLimitConfig struct {
@@ -105,6 +116,7 @@ type BackendConfig struct {
 	ConsensusSkipPeerCountCheck bool   `toml:"consensus_skip_peer_count"`
 	ConsensusForcedCandidate    bool   `toml:"consensus_forced_candidate"`
 	ConsensusReceiptsTarget     string `toml:"consensus_receipts_target"`
+	Archive                     bool   `toml:"archive"`
 }
 
 type BackendsConfig map[string]*BackendConfig
@@ -210,6 +222,7 @@ type Config struct {
 	RPCMethodMappings     map[string]string     `toml:"rpc_method_mappings"`
 	WSMethodWhitelist     []string              `toml:"ws_method_whitelist"`
 	WhitelistErrorMessage string                `toml:"whitelist_error_message"`
+	Tracing               TracingConfig         `toml:"tracing"`
 	SenderRateLimit       SenderRateLimitConfig `toml:"sender_rate_limit"`
 	SanctionedAddresses   []string              `toml:"sanctioned_addresses"`
 }

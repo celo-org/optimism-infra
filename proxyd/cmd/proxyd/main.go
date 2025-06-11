@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -11,12 +13,13 @@ import (
 	"strings"
 	"syscall"
 
+	"log/slog"
+
 	"github.com/BurntSushi/toml"
-	"golang.org/x/exp/slog"
 
 	"github.com/ethereum/go-ethereum/log"
 
-	"github.com/ethereum-optimism/optimism/proxyd"
+	"github.com/ethereum-optimism/infra/proxyd"
 )
 
 var (
@@ -60,6 +63,20 @@ func main() {
 				log.Error("failed to stop pprof server", "err", err)
 			}
 		}()
+	}
+
+	if config.Tracing.Enabled && config.Tracing.Endpoint != "" && config.Tracing.ServiceName != "" {
+		// Set up OpenTelemetry.
+		log.Info("Call setupOTelSDK")
+		otelShutdown, err := setupOTelSDK(context.Background(), config.Tracing.Endpoint, config.Tracing.Insecure, config.Tracing.ServiceName)
+		if err != nil {
+			log.Error("error setting up OpenTelemetry", "err", err)
+		}
+		// Handle shutdown properly so nothing leaks.
+		defer func() {
+			err = errors.Join(err, otelShutdown(context.Background()))
+		}()
+		log.Info("OpenTelemetry setup complete")
 	}
 
 	_, shutdown, err := proxyd.Start(config)

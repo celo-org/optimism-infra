@@ -5,16 +5,17 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"time"
 
+	"log/slog"
+
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
-	"golang.org/x/exp/slog"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -40,6 +41,7 @@ func Start(config *Config) (*Server, func(), error) {
 		}
 	}
 
+	// redis primary client
 	var redisClient *redis.Client
 	if config.Redis.URL != "" {
 		rURL, err := ReadFromEnvOrConfig(config.Redis.URL)
@@ -47,6 +49,23 @@ func Start(config *Config) (*Server, func(), error) {
 			return nil, nil, err
 		}
 		redisClient, err = NewRedisClient(rURL)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	// redis read replica client
+	// if read endpoint is not set, use primary endpoint
+	var redisReadClient = redisClient
+	if config.Redis.ReadURL != "" {
+		if redisClient == nil {
+			return nil, nil, errors.New("must specify a Redis primary URL. only read endpoint is set")
+		}
+		rURL, err := ReadFromEnvOrConfig(config.Redis.ReadURL)
+		if err != nil {
+			return nil, nil, err
+		}
+		redisReadClient, err = NewRedisClient(rURL)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -163,6 +182,7 @@ func Start(config *Config) (*Server, func(), error) {
 		opts = append(opts, WithProxydIP(os.Getenv("PROXYD_IP")))
 		opts = append(opts, WithConsensusSkipPeerCountCheck(cfg.ConsensusSkipPeerCountCheck))
 		opts = append(opts, WithConsensusForcedCandidate(cfg.ConsensusForcedCandidate))
+		opts = append(opts, WithArchive(cfg.Archive))
 		opts = append(opts, WithWeight(cfg.Weight))
 
 		receiptsTarget, err := ReadFromEnvOrConfig(cfg.ConsensusReceiptsTarget)
@@ -278,7 +298,7 @@ func Start(config *Config) (*Server, func(), error) {
 			if config.Cache.TTL != 0 {
 				ttl = time.Duration(config.Cache.TTL)
 			}
-			cache = newRedisCache(redisClient, config.Redis.Namespace, ttl)
+			cache = newRedisCache(redisClient, redisReadClient, config.Redis.Namespace, ttl)
 		}
 		rpcCache = newRPCCache(newCacheWithCompression(cache))
 	}
