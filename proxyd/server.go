@@ -38,6 +38,8 @@ const (
 	ContextKeyAuth               = "authorization"
 	ContextKeyReqID              = "req_id"
 	ContextKeyXForwardedFor      = "x_forwarded_for"
+	ContextKeyReferer            = "referer"
+	ContextKeyUserAgent          = "user_agent"
 	DefaultMaxBatchRPCCallsLimit = 100
 	MaxBatchRPCCallsHardLimit    = 1000
 	cacheStatusHdr               = "X-Proxyd-Cache-Status"
@@ -62,6 +64,7 @@ type Server struct {
 	rpcMethodMappings      map[string]string
 	maxBodySize            int64
 	enableRequestLog       bool
+	logRequests            bool
 	maxRequestBodyLogLen   int
 	authenticatedPaths     map[string]string
 	timeout                time.Duration
@@ -100,6 +103,7 @@ func NewServer(
 	rateLimitConfig RateLimitConfig,
 	senderRateLimitConfig SenderRateLimitConfig,
 	enableRequestLog bool,
+	logRequests bool,
 	maxRequestBodyLogLen int,
 	maxBatchSize int,
 	redisClient *redis.Client,
@@ -191,6 +195,7 @@ func NewServer(
 		enableServedByHeader: enableServedByHeader,
 		cache:                cache,
 		enableRequestLog:     enableRequestLog,
+		logRequests:          logRequests,
 		maxRequestBodyLogLen: maxRequestBodyLogLen,
 		maxBatchSize:         maxBatchSize,
 		upgrader: &websocket.Upgrader{
@@ -672,6 +677,12 @@ func (s *Server) populateContext(w http.ResponseWriter, r *http.Request) context
 	}
 	ctx := context.WithValue(r.Context(), ContextKeyXForwardedFor, xff) // nolint:staticcheck
 
+	// Capture HTTP headers for logging
+	referer := r.Header.Get("Referer")
+	userAgent := r.Header.Get("User-Agent")
+	ctx = context.WithValue(ctx, ContextKeyReferer, referer)     // nolint:staticcheck
+	ctx = context.WithValue(ctx, ContextKeyUserAgent, userAgent) // nolint:staticcheck
+
 	if len(s.authenticatedPaths) > 0 {
 		if authorization == "" || s.authenticatedPaths[authorization] == "" {
 			log.Info("blocked unauthorized request", "authorization", authorization)
@@ -905,6 +916,22 @@ func GetXForwardedFor(ctx context.Context) string {
 	return xff
 }
 
+func GetReferer(ctx context.Context) string {
+	referer, ok := ctx.Value(ContextKeyReferer).(string)
+	if !ok {
+		return ""
+	}
+	return referer
+}
+
+func GetUserAgent(ctx context.Context) string {
+	userAgent, ok := ctx.Value(ContextKeyUserAgent).(string)
+	if !ok {
+		return ""
+	}
+	return userAgent
+}
+
 type recordLenWriter struct {
 	io.Writer
 	Len int
@@ -959,23 +986,49 @@ type RequestInfo struct {
 	FromAddress     string `json:"from_address,omitempty"`
 	ToAddress       string `json:"to_address,omitempty"`
 	TransactionHash string `json:"transaction_hash,omitempty"`
+	Referer         string `json:"referer,omitempty"`
+	UserAgent       string `json:"user_agent,omitempty"`
 }
 
 // LogRequestInfo logs comprehensive information about RPC and WebSocket requests
 func (s *Server) LogRequestInfo(ctx context.Context, req *RPCReq, source string) {
+	// Only log if enabled in configuration
+	if !s.logRequests {
+		return
+	}
+
 	info := s.extractRequestInfo(ctx, req)
 
-	log.Info("request received",
+	// Build dynamic log fields, only including non-empty values
+	logFields := []interface{}{
 		"source", source,
 		"remote_ip", info.RemoteIP,
-		"x_forwarded_for", info.XForwardedFor,
 		"rpc_method", info.RPCMethod,
-		"from_address", info.FromAddress,
-		"to_address", info.ToAddress,
-		"transaction_hash", info.TransactionHash,
 		"req_id", GetReqID(ctx),
 		"auth", GetAuthCtx(ctx),
-	)
+	}
+
+	// Add optional fields only if they have values
+	if info.XForwardedFor != "" {
+		logFields = append(logFields, "x_forwarded_for", info.XForwardedFor)
+	}
+	if info.FromAddress != "" {
+		logFields = append(logFields, "from_address", info.FromAddress)
+	}
+	if info.ToAddress != "" {
+		logFields = append(logFields, "to_address", info.ToAddress)
+	}
+	if info.TransactionHash != "" {
+		logFields = append(logFields, "transaction_hash", info.TransactionHash)
+	}
+	if info.Referer != "" {
+		logFields = append(logFields, "referer", info.Referer)
+	}
+	if info.UserAgent != "" {
+		logFields = append(logFields, "user_agent", info.UserAgent)
+	}
+
+	log.Info("request received", logFields...)
 }
 
 // extractRequestInfo extracts detailed information from an RPC request
@@ -984,6 +1037,8 @@ func (s *Server) extractRequestInfo(ctx context.Context, req *RPCReq) *RequestIn
 		RemoteIP:      stripXFF(GetXForwardedFor(ctx)),
 		XForwardedFor: GetXForwardedFor(ctx),
 		RPCMethod:     req.Method,
+		Referer:       GetReferer(ctx),
+		UserAgent:     GetUserAgent(ctx),
 	}
 
 	// Extract transaction details based on method

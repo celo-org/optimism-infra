@@ -331,6 +331,7 @@ func Start(config *Config) (*Server, func(), error) {
 		config.RateLimit,
 		config.SenderRateLimit,
 		config.Server.EnableRequestLog,
+		config.Server.LogRequests,
 		config.Server.MaxRequestBodyLogLen,
 		config.BatchConfig.MaxSize,
 		redisClient,
