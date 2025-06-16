@@ -450,6 +450,9 @@ func (s *Server) handleBatchRPC(ctx context.Context, reqs []json.RawMessage, isL
 			continue
 		}
 
+		// Log request information
+		s.LogRequestInfo(ctx, parsedReq, "rpc")
+
 		// Simple health check
 		if len(reqs) == 1 && parsedReq.Method == proxydHealthzMethod {
 			res := &RPCRes{
@@ -946,4 +949,148 @@ func createBatchRequest(elems []batchElem) []*RPCReq {
 		batch[i] = elems[i].Req
 	}
 	return batch
+}
+
+// RequestInfo contains extracted information from an RPC request for logging
+type RequestInfo struct {
+	RemoteIP        string `json:"remote_ip"`
+	XForwardedFor   string `json:"x_forwarded_for"`
+	RPCMethod       string `json:"rpc_method"`
+	FromAddress     string `json:"from_address,omitempty"`
+	ToAddress       string `json:"to_address,omitempty"`
+	TransactionHash string `json:"transaction_hash,omitempty"`
+}
+
+// LogRequestInfo logs comprehensive information about RPC and WebSocket requests
+func (s *Server) LogRequestInfo(ctx context.Context, req *RPCReq, source string) {
+	info := s.extractRequestInfo(ctx, req)
+
+	log.Info("request received",
+		"source", source,
+		"remote_ip", info.RemoteIP,
+		"x_forwarded_for", info.XForwardedFor,
+		"rpc_method", info.RPCMethod,
+		"from_address", info.FromAddress,
+		"to_address", info.ToAddress,
+		"transaction_hash", info.TransactionHash,
+		"req_id", GetReqID(ctx),
+		"auth", GetAuthCtx(ctx),
+	)
+}
+
+// extractRequestInfo extracts detailed information from an RPC request
+func (s *Server) extractRequestInfo(ctx context.Context, req *RPCReq) *RequestInfo {
+	info := &RequestInfo{
+		RemoteIP:      stripXFF(GetXForwardedFor(ctx)),
+		XForwardedFor: GetXForwardedFor(ctx),
+		RPCMethod:     req.Method,
+	}
+
+	// Extract transaction details based on method
+	switch req.Method {
+	case "eth_sendRawTransaction":
+		s.extractSendRawTransactionInfo(req, info)
+	case "eth_sendTransaction":
+		s.extractSendTransactionInfo(req, info)
+	case "eth_getTransactionByHash":
+		s.extractTransactionHashFromParams(req, info)
+	case "eth_getTransactionReceipt":
+		s.extractTransactionHashFromParams(req, info)
+	case "eth_call":
+		s.extractCallInfo(req, info)
+	case "eth_estimateGas":
+		s.extractEstimateGasInfo(req, info)
+	case "eth_getBalance", "eth_getCode", "eth_getTransactionCount", "eth_getStorageAt":
+		s.extractAddressFromParams(req, info)
+	}
+
+	return info
+}
+
+// extractSendRawTransactionInfo extracts transaction details from eth_sendRawTransaction
+func (s *Server) extractSendRawTransactionInfo(req *RPCReq, info *RequestInfo) {
+	tx, from, err := s.processTransaction(context.Background(), req)
+	if err != nil {
+		return
+	}
+
+	info.FromAddress = from.Hex()
+	info.TransactionHash = tx.Hash().Hex()
+
+	if to := tx.To(); to != nil {
+		info.ToAddress = to.Hex()
+	}
+}
+
+// extractSendTransactionInfo extracts transaction details from eth_sendTransaction
+func (s *Server) extractSendTransactionInfo(req *RPCReq, info *RequestInfo) {
+	var params []map[string]interface{}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return
+	}
+
+	if len(params) == 0 {
+		return
+	}
+
+	txParam := params[0]
+
+	if from, ok := txParam["from"].(string); ok {
+		info.FromAddress = from
+	}
+
+	if to, ok := txParam["to"].(string); ok {
+		info.ToAddress = to
+	}
+}
+
+// extractTransactionHashFromParams extracts transaction hash from first parameter
+func (s *Server) extractTransactionHashFromParams(req *RPCReq, info *RequestInfo) {
+	var params []string
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return
+	}
+
+	if len(params) > 0 {
+		info.TransactionHash = params[0]
+	}
+}
+
+// extractCallInfo extracts call information from eth_call
+func (s *Server) extractCallInfo(req *RPCReq, info *RequestInfo) {
+	var params []interface{}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return
+	}
+
+	if len(params) == 0 {
+		return
+	}
+
+	if callParam, ok := params[0].(map[string]interface{}); ok {
+		if from, ok := callParam["from"].(string); ok {
+			info.FromAddress = from
+		}
+
+		if to, ok := callParam["to"].(string); ok {
+			info.ToAddress = to
+		}
+	}
+}
+
+// extractEstimateGasInfo extracts gas estimation information
+func (s *Server) extractEstimateGasInfo(req *RPCReq, info *RequestInfo) {
+	s.extractCallInfo(req, info) // Same structure as eth_call
+}
+
+// extractAddressFromParams extracts address from first parameter (for balance, code, etc.)
+func (s *Server) extractAddressFromParams(req *RPCReq, info *RequestInfo) {
+	var params []string
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return
+	}
+
+	if len(params) > 0 {
+		info.ToAddress = params[0] // Using ToAddress field for the queried address
+	}
 }
