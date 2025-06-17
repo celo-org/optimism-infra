@@ -1249,6 +1249,9 @@ func (w *WSProxier) clientPump(ctx context.Context, errC chan error) {
 			continue
 		}
 
+		// Log WebSocket request information
+		w.server.LogRequestInfo(ctx, req, "websocket")
+
 		// Send eth_accounts requests directly to the client
 		if req.Method == "eth_accounts" {
 			msg = mustMarshalJSON(NewRPCRes(req.ID, emptyArrayResponse))

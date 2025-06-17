@@ -38,6 +38,8 @@ const (
 	ContextKeyAuth               = "authorization"
 	ContextKeyReqID              = "req_id"
 	ContextKeyXForwardedFor      = "x_forwarded_for"
+	ContextKeyReferer            = "referer"
+	ContextKeyUserAgent          = "user_agent"
 	DefaultMaxBatchRPCCallsLimit = 100
 	MaxBatchRPCCallsHardLimit    = 1000
 	cacheStatusHdr               = "X-Proxyd-Cache-Status"
@@ -352,14 +354,6 @@ func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
 	}
 	RecordRequestPayloadSize(ctx, len(body))
 
-	if s.enableRequestLog {
-		log.Info("Raw RPC request",
-			"body", truncate(string(body), s.maxRequestBodyLogLen),
-			"req_id", GetReqID(ctx),
-			"auth", GetAuthCtx(ctx),
-		)
-	}
-
 	if IsBatch(body) {
 		reqs, err := ParseBatchRPCReq(body)
 		if err != nil {
@@ -382,7 +376,7 @@ func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		batchRes, batchContainsCached, servedBy, err := s.handleBatchRPC(ctx, reqs, isLimited, true)
+		batchRes, batchContainsCached, servedBy, err := s.handleBatchRPC(ctx, reqs, isLimited, true, body)
 		if err == context.DeadlineExceeded {
 			writeRPCError(ctx, w, nil, ErrGatewayTimeout)
 			return
@@ -405,7 +399,7 @@ func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rawBody := json.RawMessage(body)
-	backendRes, cached, servedBy, err := s.handleBatchRPC(ctx, []json.RawMessage{rawBody}, isLimited, false)
+	backendRes, cached, servedBy, err := s.handleBatchRPC(ctx, []json.RawMessage{rawBody}, isLimited, false, body)
 	if err != nil {
 		if errors.Is(err, ErrConsensusGetReceiptsCantBeBatched) ||
 			errors.Is(err, ErrConsensusGetReceiptsInvalidTarget) {
@@ -422,7 +416,7 @@ func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
 	writeRPCRes(ctx, w, backendRes[0])
 }
 
-func (s *Server) handleBatchRPC(ctx context.Context, reqs []json.RawMessage, isLimited limiterFunc, isBatch bool) ([]*RPCRes, bool, string, error) {
+func (s *Server) handleBatchRPC(ctx context.Context, reqs []json.RawMessage, isLimited limiterFunc, isBatch bool, rawBody []byte) ([]*RPCRes, bool, string, error) {
 
 	_, span := tracer.Start(ctx, "BatchRPCFunction")
 	defer span.End()
@@ -449,6 +443,9 @@ func (s *Server) handleBatchRPC(ctx context.Context, reqs []json.RawMessage, isL
 			responses[i] = NewRPCErrorRes(nil, err)
 			continue
 		}
+
+		// Log request information
+		s.LogRequestInfo(ctx, parsedReq, "rpc", rawBody)
 
 		// Simple health check
 		if len(reqs) == 1 && parsedReq.Method == proxydHealthzMethod {
@@ -668,6 +665,12 @@ func (s *Server) populateContext(w http.ResponseWriter, r *http.Request) context
 		}
 	}
 	ctx := context.WithValue(r.Context(), ContextKeyXForwardedFor, xff) // nolint:staticcheck
+
+	// Capture HTTP headers for logging
+	referer := r.Header.Get("Referer")
+	userAgent := r.Header.Get("User-Agent")
+	ctx = context.WithValue(ctx, ContextKeyReferer, referer)     // nolint:staticcheck
+	ctx = context.WithValue(ctx, ContextKeyUserAgent, userAgent) // nolint:staticcheck
 
 	if len(s.authenticatedPaths) > 0 {
 		if authorization == "" || s.authenticatedPaths[authorization] == "" {
@@ -902,6 +905,22 @@ func GetXForwardedFor(ctx context.Context) string {
 	return xff
 }
 
+func GetReferer(ctx context.Context) string {
+	referer, ok := ctx.Value(ContextKeyReferer).(string)
+	if !ok {
+		return ""
+	}
+	return referer
+}
+
+func GetUserAgent(ctx context.Context) string {
+	userAgent, ok := ctx.Value(ContextKeyUserAgent).(string)
+	if !ok {
+		return ""
+	}
+	return userAgent
+}
+
 type recordLenWriter struct {
 	io.Writer
 	Len int
@@ -946,4 +965,181 @@ func createBatchRequest(elems []batchElem) []*RPCReq {
 		batch[i] = elems[i].Req
 	}
 	return batch
+}
+
+// RequestInfo contains extracted information from an RPC request for logging
+type RequestInfo struct {
+	RemoteIP        string `json:"remote_ip"`
+	XForwardedFor   string `json:"x_forwarded_for"`
+	RPCMethod       string `json:"rpc_method"`
+	FromAddress     string `json:"from_address,omitempty"`
+	ToAddress       string `json:"to_address,omitempty"`
+	TransactionHash string `json:"transaction_hash,omitempty"`
+	Referer         string `json:"referer,omitempty"`
+	UserAgent       string `json:"user_agent,omitempty"`
+}
+
+// LogRequestInfo logs comprehensive information about RPC and WebSocket requests
+func (s *Server) LogRequestInfo(ctx context.Context, req *RPCReq, source string, rawBody ...[]byte) {
+	// Only log if enabled in configuration
+	if !s.enableRequestLog {
+		return
+	}
+
+	info := s.extractRequestInfo(ctx, req)
+
+	// Build dynamic log fields, only including non-empty values
+	logFields := []interface{}{
+		"source", source,
+		"remote_ip", info.RemoteIP,
+		"rpc_method", info.RPCMethod,
+		"req_id", GetReqID(ctx),
+		"auth", GetAuthCtx(ctx),
+	}
+
+	// Add raw body if provided (for RPC requests)
+	if len(rawBody) > 0 && len(rawBody[0]) > 0 {
+		logFields = append(logFields, "body", truncate(string(rawBody[0]), s.maxRequestBodyLogLen))
+	}
+
+	// Add optional fields only if they have values
+	if info.XForwardedFor != "" {
+		logFields = append(logFields, "x_forwarded_for", info.XForwardedFor)
+	}
+	if info.FromAddress != "" {
+		logFields = append(logFields, "from_address", info.FromAddress)
+	}
+	if info.ToAddress != "" {
+		logFields = append(logFields, "to_address", info.ToAddress)
+	}
+	if info.TransactionHash != "" {
+		logFields = append(logFields, "transaction_hash", info.TransactionHash)
+	}
+	if info.Referer != "" {
+		logFields = append(logFields, "referer", info.Referer)
+	}
+	if info.UserAgent != "" {
+		logFields = append(logFields, "user_agent", info.UserAgent)
+	}
+
+	log.Info("request received", logFields...)
+}
+
+// extractRequestInfo extracts detailed information from an RPC request
+func (s *Server) extractRequestInfo(ctx context.Context, req *RPCReq) *RequestInfo {
+	info := &RequestInfo{
+		RemoteIP:      stripXFF(GetXForwardedFor(ctx)),
+		XForwardedFor: GetXForwardedFor(ctx),
+		RPCMethod:     req.Method,
+		Referer:       GetReferer(ctx),
+		UserAgent:     GetUserAgent(ctx),
+	}
+
+	// Extract transaction details based on method
+	switch req.Method {
+	case "eth_sendRawTransaction":
+		s.extractSendRawTransactionInfo(req, info)
+	case "eth_sendTransaction":
+		s.extractSendTransactionInfo(req, info)
+	case "eth_getTransactionByHash":
+		s.extractTransactionHashFromParams(req, info)
+	case "eth_getTransactionReceipt":
+		s.extractTransactionHashFromParams(req, info)
+	case "eth_call":
+		s.extractCallInfo(req, info)
+	case "eth_estimateGas":
+		s.extractEstimateGasInfo(req, info)
+	case "eth_getBalance", "eth_getCode", "eth_getTransactionCount", "eth_getStorageAt":
+		s.extractAddressFromParams(req, info)
+	}
+
+	return info
+}
+
+// extractSendRawTransactionInfo extracts transaction details from eth_sendRawTransaction
+func (s *Server) extractSendRawTransactionInfo(req *RPCReq, info *RequestInfo) {
+	tx, from, err := s.processTransaction(context.Background(), req)
+	if err != nil {
+		return
+	}
+
+	info.FromAddress = from.Hex()
+	info.TransactionHash = tx.Hash().Hex()
+
+	if to := tx.To(); to != nil {
+		info.ToAddress = to.Hex()
+	}
+}
+
+// extractSendTransactionInfo extracts transaction details from eth_sendTransaction
+func (s *Server) extractSendTransactionInfo(req *RPCReq, info *RequestInfo) {
+	var params []map[string]interface{}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return
+	}
+
+	if len(params) == 0 {
+		return
+	}
+
+	txParam := params[0]
+
+	if from, ok := txParam["from"].(string); ok {
+		info.FromAddress = from
+	}
+
+	if to, ok := txParam["to"].(string); ok {
+		info.ToAddress = to
+	}
+}
+
+// extractTransactionHashFromParams extracts transaction hash from first parameter
+func (s *Server) extractTransactionHashFromParams(req *RPCReq, info *RequestInfo) {
+	var params []string
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return
+	}
+
+	if len(params) > 0 {
+		info.TransactionHash = params[0]
+	}
+}
+
+// extractCallInfo extracts call information from eth_call
+func (s *Server) extractCallInfo(req *RPCReq, info *RequestInfo) {
+	var params []interface{}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return
+	}
+
+	if len(params) == 0 {
+		return
+	}
+
+	if callParam, ok := params[0].(map[string]interface{}); ok {
+		if from, ok := callParam["from"].(string); ok {
+			info.FromAddress = from
+		}
+
+		if to, ok := callParam["to"].(string); ok {
+			info.ToAddress = to
+		}
+	}
+}
+
+// extractEstimateGasInfo extracts gas estimation information
+func (s *Server) extractEstimateGasInfo(req *RPCReq, info *RequestInfo) {
+	s.extractCallInfo(req, info) // Same structure as eth_call
+}
+
+// extractAddressFromParams extracts address from first parameter (for balance, code, etc.)
+func (s *Server) extractAddressFromParams(req *RPCReq, info *RequestInfo) {
+	var params []string
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return
+	}
+
+	if len(params) > 0 {
+		info.ToAddress = params[0] // Using ToAddress field for the queried address
+	}
 }
