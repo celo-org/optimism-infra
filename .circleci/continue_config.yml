@@ -269,7 +269,7 @@ jobs:
         type: string
     docker:
       - image: cimg/go:1.21
-    resource_class: xlarge
+    resource_class: medium
     steps:
       - checkout
       - run:
@@ -286,9 +286,9 @@ jobs:
           name: run lint
           command: |
              if [ -f .golangci.yml ]; then
-              golangci-lint run -c .golangci.yml -E goimports,sqlclosecheck,bodyclose,asciicheck,misspell,errorlint -e "errors.As" -e "errors.Is" --timeout "3m0s" ./...
+              nice -n 10 golangci-lint run -c .golangci.yml -E goimports,sqlclosecheck,bodyclose,asciicheck,misspell,errorlint -e "errors.As" -e "errors.Is" --concurrency 1 --timeout "3m0s" ./...
              else
-              golangci-lint run -E goimports,sqlclosecheck,bodyclose,asciicheck,misspell,errorlint -e "errors.As" -e "errors.Is" --timeout "3m0s" ./...
+              nice -n 10 golangci-lint run -E goimports,sqlclosecheck,bodyclose,asciicheck,misspell,errorlint -e "errors.As" -e "errors.Is" --concurrency 1 --timeout "3m0s" ./...
              fi
           working_directory: <<parameters.module>>
 
