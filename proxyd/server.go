@@ -64,7 +64,6 @@ type Server struct {
 	rpcMethodMappings      map[string]string
 	maxBodySize            int64
 	enableRequestLog       bool
-	logRequests            bool
 	maxRequestBodyLogLen   int
 	authenticatedPaths     map[string]string
 	timeout                time.Duration
@@ -103,7 +102,6 @@ func NewServer(
 	rateLimitConfig RateLimitConfig,
 	senderRateLimitConfig SenderRateLimitConfig,
 	enableRequestLog bool,
-	logRequests bool,
 	maxRequestBodyLogLen int,
 	maxBatchSize int,
 	redisClient *redis.Client,
@@ -195,7 +193,6 @@ func NewServer(
 		enableServedByHeader: enableServedByHeader,
 		cache:                cache,
 		enableRequestLog:     enableRequestLog,
-		logRequests:          logRequests,
 		maxRequestBodyLogLen: maxRequestBodyLogLen,
 		maxBatchSize:         maxBatchSize,
 		upgrader: &websocket.Upgrader{
@@ -362,6 +359,10 @@ func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
 			"body", truncate(string(body), s.maxRequestBodyLogLen),
 			"req_id", GetReqID(ctx),
 			"auth", GetAuthCtx(ctx),
+			"remote_ip", stripXFF(GetXForwardedFor(ctx)),
+			"x_forwarded_for", GetXForwardedFor(ctx),
+			"referer", GetReferer(ctx),
+			"user_agent", GetUserAgent(ctx),
 		)
 	}
 
@@ -993,7 +994,7 @@ type RequestInfo struct {
 // LogRequestInfo logs comprehensive information about RPC and WebSocket requests
 func (s *Server) LogRequestInfo(ctx context.Context, req *RPCReq, source string) {
 	// Only log if enabled in configuration
-	if !s.logRequests {
+	if !s.enableRequestLog {
 		return
 	}
 
