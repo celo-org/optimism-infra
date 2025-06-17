@@ -1,10 +1,10 @@
 version: 2.1
 
 orbs:
-  go: circleci/go@1.9.0
-  gcp-cli: circleci/gcp-cli@2.4.1
-  shellcheck: circleci/shellcheck@3.1.2
-  path-filtering: circleci/path-filtering@1.0.0
+  go: circleci/go@3.0.2
+  gcp-cli: circleci/gcp-cli@3.3.0
+  shellcheck: circleci/shellcheck@3.4.0
+  path-filtering: circleci/path-filtering@2.0.1
 
 parameters:
   run-build-op-conductor-mon:
@@ -250,7 +250,7 @@ jobs:
         type: string
         default: "oplabs-tools-artifacts/images"
     docker:
-      - image: cimg/python:3.7
+      - image: cimg/python:3.9
     resource_class: small
     steps:
       - gcp-cli/install
@@ -268,7 +268,7 @@ jobs:
         description: Go Module Name
         type: string
     docker:
-      - image: cimg/go:1.21
+      - image: cimg/go:1.23
     steps:
       - checkout
       - run:
@@ -285,9 +285,9 @@ jobs:
           name: run lint
           command: |
              if [ -f .golangci.yml ]; then
-              golangci-lint run -c .golangci.yml -E goimports,sqlclosecheck,bodyclose,asciicheck,misspell,errorlint -e "errors.As" -e "errors.Is" --timeout "3m0s" ./...
+              golangci-lint run -c .golangci.yml -E goimports,sqlclosecheck,bodyclose,asciicheck,misspell,errorlint -e "errors.As" -e "errors.Is" --concurrency 1 --timeout "5m0s" ./...
              else
-              golangci-lint run -E goimports,sqlclosecheck,bodyclose,asciicheck,misspell,errorlint -e "errors.As" -e "errors.Is" --timeout "3m0s" ./...
+              golangci-lint run -E goimports,sqlclosecheck,bodyclose,asciicheck,misspell,errorlint -e "errors.As" -e "errors.Is" --concurrency 1 --timeout "5m0s" ./...
              fi
           working_directory: <<parameters.module>>
 
