@@ -427,12 +427,15 @@ func (m *TestMockBackend) Start() {
 	m.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		var req map[string]interface{}
-		json.Unmarshal(body, &req)
+		if err := json.Unmarshal(body, &req); err != nil {
+			w.WriteHeader(400)
+			return
+		}
 
 		method := req["method"].(string)
 		if response, exists := m.responses[method]; exists {
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(response))
+			_, _ = w.Write([]byte(response)) // Explicitly ignore error in test helper
 		} else {
 			w.WriteHeader(404)
 		}
@@ -450,11 +453,14 @@ func (m *TestMockBackend) Close() {
 }
 
 // Mock WebSocket connection for testing
+//
+//nolint:unused // Test helper that may be used in future tests
 type mockWebSocketConn struct {
 	messages chan []byte
 	closed   bool
 }
 
+//nolint:unused // Test helper method
 func (m *mockWebSocketConn) WriteMessage(messageType int, data []byte) error {
 	if m.closed {
 		return websocket.ErrCloseSent
@@ -467,6 +473,7 @@ func (m *mockWebSocketConn) WriteMessage(messageType int, data []byte) error {
 	}
 }
 
+//nolint:unused // Test helper method
 func (m *mockWebSocketConn) ReadMessage() (messageType int, p []byte, err error) {
 	if m.closed {
 		return 0, nil, websocket.ErrCloseSent
@@ -479,16 +486,20 @@ func (m *mockWebSocketConn) ReadMessage() (messageType int, p []byte, err error)
 	}
 }
 
+//nolint:unused // Test helper method
 func (m *mockWebSocketConn) Close() error {
 	m.closed = true
 	close(m.messages)
 	return nil
 }
 
+//nolint:unused // Test helper method
 func (m *mockWebSocketConn) SetReadLimit(limit int64) {}
 
+//nolint:unused // Test helper method
 func (m *mockWebSocketConn) SetWriteDeadline(t time.Time) error { return nil }
 
+//nolint:unused // Test helper method
 func (m *mockWebSocketConn) SetReadDeadline(t time.Time) error { return nil }
 
 // Helper functions for creating test transactions with specific private keys
