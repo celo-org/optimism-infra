@@ -594,11 +594,6 @@ func addressFromPrivateKey(t *testing.T, privateKeyHex string) common.Address {
 }
 
 func TestLogRequestInfo(t *testing.T) {
-	// Test helper to capture log output
-	type logCapture struct {
-		entries []map[string]interface{}
-	}
-
 	testCases := []struct {
 		name           string
 		enableLogging  bool
@@ -935,15 +930,15 @@ func TestExtractTransactionParameterMethods(t *testing.T) {
 
 func createTestContext(ip, userAgent, referer string) context.Context {
 	ctx := context.Background()
-	ctx = context.WithValue(ctx, ContextKeyXForwardedFor, ip+", 10.0.0.1")
-	ctx = context.WithValue(ctx, ContextKeyReqID, "test-req-123")
-	ctx = context.WithValue(ctx, ContextKeyAuth, "test-user")
+	ctx = context.WithValue(ctx, ContextKeyXForwardedFor, ip+", 10.0.0.1") // nolint:staticcheck
+	ctx = context.WithValue(ctx, ContextKeyReqID, "test-req-123")          // nolint:staticcheck
+	ctx = context.WithValue(ctx, ContextKeyAuth, "test-user")              // nolint:staticcheck
 
 	if userAgent != "" {
-		ctx = context.WithValue(ctx, ContextKeyUserAgent, userAgent)
+		ctx = context.WithValue(ctx, ContextKeyUserAgent, userAgent) // nolint:staticcheck
 	}
 	if referer != "" {
-		ctx = context.WithValue(ctx, ContextKeyReferer, referer)
+		ctx = context.WithValue(ctx, ContextKeyReferer, referer) // nolint:staticcheck
 	}
 
 	return ctx
@@ -951,6 +946,6 @@ func createTestContext(ip, userAgent, referer string) context.Context {
 
 func createMinimalTestContext() context.Context {
 	ctx := context.Background()
-	ctx = context.WithValue(ctx, ContextKeyReqID, "minimal-req")
+	ctx = context.WithValue(ctx, ContextKeyReqID, "minimal-req") // nolint:staticcheck
 	return ctx
 }
