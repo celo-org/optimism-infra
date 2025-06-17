@@ -416,7 +416,7 @@ func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
 	writeRPCRes(ctx, w, backendRes[0])
 }
 
-func (s *Server) handleBatchRPC(ctx context.Context, reqs []json.RawMessage, isLimited limiterFunc, isBatch bool, rawBody ...[]byte) ([]*RPCRes, bool, string, error) {
+func (s *Server) handleBatchRPC(ctx context.Context, reqs []json.RawMessage, isLimited limiterFunc, isBatch bool, rawBody []byte) ([]*RPCRes, bool, string, error) {
 
 	_, span := tracer.Start(ctx, "BatchRPCFunction")
 	defer span.End()
@@ -445,7 +445,7 @@ func (s *Server) handleBatchRPC(ctx context.Context, reqs []json.RawMessage, isL
 		}
 
 		// Log request information
-		s.LogRequestInfo(ctx, parsedReq, "rpc", rawBody...)
+		s.LogRequestInfo(ctx, parsedReq, "rpc", rawBody)
 
 		// Simple health check
 		if len(reqs) == 1 && parsedReq.Method == proxydHealthzMethod {
