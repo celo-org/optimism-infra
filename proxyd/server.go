@@ -354,18 +354,6 @@ func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
 	}
 	RecordRequestPayloadSize(ctx, len(body))
 
-	if s.enableRequestLog {
-		log.Info("Raw RPC request",
-			"body", truncate(string(body), s.maxRequestBodyLogLen),
-			"req_id", GetReqID(ctx),
-			"auth", GetAuthCtx(ctx),
-			"remote_ip", stripXFF(GetXForwardedFor(ctx)),
-			"x_forwarded_for", GetXForwardedFor(ctx),
-			"referer", GetReferer(ctx),
-			"user_agent", GetUserAgent(ctx),
-		)
-	}
-
 	if IsBatch(body) {
 		reqs, err := ParseBatchRPCReq(body)
 		if err != nil {
@@ -388,7 +376,7 @@ func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		batchRes, batchContainsCached, servedBy, err := s.handleBatchRPC(ctx, reqs, isLimited, true)
+		batchRes, batchContainsCached, servedBy, err := s.handleBatchRPC(ctx, reqs, isLimited, true, body)
 		if err == context.DeadlineExceeded {
 			writeRPCError(ctx, w, nil, ErrGatewayTimeout)
 			return
@@ -411,7 +399,7 @@ func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rawBody := json.RawMessage(body)
-	backendRes, cached, servedBy, err := s.handleBatchRPC(ctx, []json.RawMessage{rawBody}, isLimited, false)
+	backendRes, cached, servedBy, err := s.handleBatchRPC(ctx, []json.RawMessage{rawBody}, isLimited, false, body)
 	if err != nil {
 		if errors.Is(err, ErrConsensusGetReceiptsCantBeBatched) ||
 			errors.Is(err, ErrConsensusGetReceiptsInvalidTarget) {
@@ -428,7 +416,7 @@ func (s *Server) HandleRPC(w http.ResponseWriter, r *http.Request) {
 	writeRPCRes(ctx, w, backendRes[0])
 }
 
-func (s *Server) handleBatchRPC(ctx context.Context, reqs []json.RawMessage, isLimited limiterFunc, isBatch bool) ([]*RPCRes, bool, string, error) {
+func (s *Server) handleBatchRPC(ctx context.Context, reqs []json.RawMessage, isLimited limiterFunc, isBatch bool, rawBody ...[]byte) ([]*RPCRes, bool, string, error) {
 
 	_, span := tracer.Start(ctx, "BatchRPCFunction")
 	defer span.End()
@@ -457,7 +445,7 @@ func (s *Server) handleBatchRPC(ctx context.Context, reqs []json.RawMessage, isL
 		}
 
 		// Log request information
-		s.LogRequestInfo(ctx, parsedReq, "rpc")
+		s.LogRequestInfo(ctx, parsedReq, "rpc", rawBody...)
 
 		// Simple health check
 		if len(reqs) == 1 && parsedReq.Method == proxydHealthzMethod {
@@ -992,7 +980,7 @@ type RequestInfo struct {
 }
 
 // LogRequestInfo logs comprehensive information about RPC and WebSocket requests
-func (s *Server) LogRequestInfo(ctx context.Context, req *RPCReq, source string) {
+func (s *Server) LogRequestInfo(ctx context.Context, req *RPCReq, source string, rawBody ...[]byte) {
 	// Only log if enabled in configuration
 	if !s.enableRequestLog {
 		return
@@ -1007,6 +995,11 @@ func (s *Server) LogRequestInfo(ctx context.Context, req *RPCReq, source string)
 		"rpc_method", info.RPCMethod,
 		"req_id", GetReqID(ctx),
 		"auth", GetAuthCtx(ctx),
+	}
+
+	// Add raw body if provided (for RPC requests)
+	if len(rawBody) > 0 && len(rawBody[0]) > 0 {
+		logFields = append(logFields, "body", truncate(string(rawBody[0]), s.maxRequestBodyLogLen))
 	}
 
 	// Add optional fields only if they have values
