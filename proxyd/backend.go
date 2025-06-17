@@ -514,7 +514,7 @@ func (b *Backend) ForwardRPC(ctx context.Context, res *RPCRes, id string, method
 		return fmt.Errorf("unexpected response len for non-batched request (len != 1)")
 	}
 	if slicedRes[0].IsError() {
-		return fmt.Errorf(slicedRes[0].Error.Error())
+		return fmt.Errorf("backend error: %s", slicedRes[0].Error.Error())
 	}
 
 	*res = *(slicedRes[0])
