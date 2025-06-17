@@ -435,10 +435,7 @@ func (m *TestMockBackend) Start() {
 		method := req["method"].(string)
 		if response, exists := m.responses[method]; exists {
 			w.Header().Set("Content-Type", "application/json")
-			if _, err := w.Write([]byte(response)); err != nil {
-				// Log error but continue since this is a test helper
-				// In real code you might want to handle this differently
-			}
+			_, _ = w.Write([]byte(response)) // Explicitly ignore error in test helper
 		} else {
 			w.WriteHeader(404)
 		}
