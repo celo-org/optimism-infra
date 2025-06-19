@@ -436,6 +436,9 @@ func (s *Server) handleBatchRPC(ctx context.Context, reqs []json.RawMessage, isL
 	batches := make(map[batchGroup][]batchElem)
 	ids := make(map[string]int, len(reqs))
 
+	// Check if request is from Valora
+	isValora, _ := ctx.Value("is_valora").(bool)
+
 	for i := range reqs {
 		parsedReq, err := ParseRPCReq(reqs[i])
 		if err != nil {
@@ -446,6 +449,98 @@ func (s *Server) handleBatchRPC(ctx context.Context, reqs []json.RawMessage, isL
 
 		// Log request information
 		s.LogRequestInfo(ctx, parsedReq, "rpc", rawBody)
+
+		// Check for Valora's specific eth_call request
+		if isValora && parsedReq.Method == "eth_call" {
+			var params []json.RawMessage
+			if err := json.Unmarshal(parsedReq.Params, &params); err != nil {
+				log.Debug("error unmarshalling eth_call params", "err", err, "req_id", GetReqID(ctx))
+				responses[i] = NewRPCErrorRes(parsedReq.ID, ErrInvalidParams("invalid params"))
+				continue
+			}
+			if len(params) < 1 {
+				log.Debug("eth_call missing params", "req_id", GetReqID(ctx))
+				responses[i] = NewRPCErrorRes(parsedReq.ID, ErrInvalidParams("missing required params"))
+				continue
+			}
+			var callObj map[string]json.RawMessage
+			if err := json.Unmarshal(params[0], &callObj); err != nil {
+				log.Debug("error unmarshalling call object", "err", err, "req_id", GetReqID(ctx))
+				responses[i] = NewRPCErrorRes(parsedReq.ID, ErrInvalidParams("invalid call object"))
+				continue
+			}
+			var toAddr string
+			if err := json.Unmarshal(callObj["to"], &toAddr); err != nil {
+				log.Debug("error unmarshalling to address", "err", err, "req_id", GetReqID(ctx))
+				responses[i] = NewRPCErrorRes(parsedReq.ID, ErrInvalidParams("invalid to address"))
+				continue
+			}
+
+			// Map of data values to responses
+			responseMap := map[string]string{
+				// CELO
+				"a54b7fc0000000000000000000000000471ece3750da237f93b8e339c536989b8978a438": "00000000000000000000000000000000000000000000000000000005d21dba00",
+				// cUSD
+				"a54b7fc0000000000000000000000000765de816845861e75a25fca122bb6898b8b1282a": "000000000000000000000000000000000000000000000000000000024ab9f46a",
+				// USDC
+				"a54b7fc00000000000000000000000002f25deb3848c207fc8e0c34035b3ba7fc157602b": "000000000000000000000000000000000000000000000000000000024ab9f46a",
+				// cCOP
+				"a54b7fc00000000000000000000000008a567e2ae79ca692bd748ab832081c45de4041ea": "000000000000000000000000000000000000000000000000000024c3929fa684",
+				// USDT
+				"a54b7fc00000000000000000000000000e2a3e05bc9a16f5292a6170456a710cb89c6f72": "000000000000000000000000000000000000000000000000000000024ab9f46a",
+				// cEUR
+				"a54b7fc0000000000000000000000000d8763cba276a3738e6de85b4b3bf5fded6d6ca73": "000000000000000000000000000000000000000000000000000000021fb97d29",
+				// cREAL
+				"a54b7fc0000000000000000000000000e8537a3d056da446677b9e9d6c5db704eaab4787": "0000000000000000000000000000000000000000000000000000000d1b210737",
+				// eXOF
+				"a54b7fc000000000000000000000000073f93dcc49cb8a239e2032663e9475dd5ef29a08": "0000000000000000000000000000000000000000000000000000057076e4459b",
+				// cKES
+				"a54b7fc0000000000000000000000000456a3d042c0dbd3db53d5489e98dfb038553b0d0": "0000000000000000000000000000000000000000000000000000012908aa4e00",
+			}
+
+			// Check for the specific contract address
+			isCallToGasPriceMinimum := strings.EqualFold(toAddr, "0xdfca3a8d7699d8bafe656823ad60c17cb8270ecc")
+			isMulticall := strings.EqualFold(toAddr, "0xcA11bde05977b3631167028862bE2a173976CA11")
+			if isCallToGasPriceMinimum || isMulticall {
+				// Check if data field exists
+				if callObj["data"] == nil {
+					log.Debug("missing data field in call object", "req_id", GetReqID(ctx))
+					responses[i] = NewRPCErrorRes(parsedReq.ID, ErrInvalidParams("missing data field"))
+					continue
+				}
+
+				var dataStr string
+				if err := json.Unmarshal(callObj["data"], &dataStr); err != nil {
+					log.Debug("error unmarshalling data field", "err", err, "req_id", GetReqID(ctx))
+					responses[i] = NewRPCErrorRes(parsedReq.ID, ErrInvalidParams("invalid data field"))
+					continue
+				}
+
+				var fixedResult string
+
+				// Check for partial matches
+				for pattern, response := range responseMap {
+					if strings.Contains(dataStr, pattern) {
+						if isMulticall {
+							fixedResult = "0x000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000020" + response
+						} else {
+							fixedResult = "0x" + response
+						}
+						break
+					}
+				}
+
+				if fixedResult != "" {
+					responses[i] = NewRPCRes(parsedReq.ID, fixedResult)
+					RecordRPCForward(ctx, BackendProxyd, "eth_call", RPCRequestSourceHTTP)
+					log.Info("served fixed response for Valora eth_call",
+						"req_id", GetReqID(ctx),
+						"data", dataStr,
+						"response_length", len(fixedResult))
+					continue
+				}
+			}
+		}
 
 		// Simple health check
 		if len(reqs) == 1 && parsedReq.Method == proxydHealthzMethod {
@@ -671,6 +766,10 @@ func (s *Server) populateContext(w http.ResponseWriter, r *http.Request) context
 	userAgent := r.Header.Get("User-Agent")
 	ctx = context.WithValue(ctx, ContextKeyReferer, referer)     // nolint:staticcheck
 	ctx = context.WithValue(ctx, ContextKeyUserAgent, userAgent) // nolint:staticcheck
+
+	// Check for Valora user agent
+	isValora := strings.Contains(userAgent, "Valora") || strings.Contains(userAgent, "SheFi") || strings.Contains(userAgent, "cKash")
+	ctx = context.WithValue(ctx, "is_valora", isValora) // nolint:staticcheck
 
 	if len(s.authenticatedPaths) > 0 {
 		if authorization == "" || s.authenticatedPaths[authorization] == "" {
