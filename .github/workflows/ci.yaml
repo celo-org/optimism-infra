@@ -1,0 +1,114 @@
+---
+name: Build and test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  files-changed:
+    runs-on: 'ubuntu-latest'
+    permissions:
+      pull-requests: read
+    outputs:
+      all_modified_files: ',${{ steps.changed-files.outputs.all_modified_files }}'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Detect files changed in PR (or commit), and expose as output
+        id: changed-files
+        uses: tj-actions/changed-files@v44
+        with:
+          # Using comma as separator to be able to easily match full paths (using ,<path>)
+          separator: ','
+      
+  op-conductor-mon:
+    name: Build and test op-conductor-mon
+    needs: files-changed
+    if: |
+      contains(needs.files-changed.outputs.all_modified_files, 'op-conductor-mon') ||
+      contains(needs.files-changed.outputs.all_modified_files, ',go.mod')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: op-conductor-mon
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Lint code
+        run: |
+          make generate || go generate ./...
+          go mod tidy && git diff --exit-code
+          if [ -f .golangci.yml ]; then
+            golangci-lint run -c .golangci.yml -E goimports,sqlclosecheck,bodyclose,asciicheck,misspell,errorlint -e "errors.As" -e "errors.Is" --timeout "3m0s" ./...
+          else
+            golangci-lint run -E goimports,sqlclosecheck,bodyclose,asciicheck,misspell,errorlint -e "errors.As" -e "errors.Is" --timeout "3m0s" ./...
+          fi
+      - name: Run tests
+        run: |
+          go version
+          mkdir -p /tmp/test-results
+          gotestsum --format=standard-verbose --junitfile=/tmp/test-results/op-conductor-mon.xml \
+            -- -coverpkg=github.com/ethereum-optimism/infrastructure-services/... -coverprofile=coverage.out ./...
+
+  op-ufm:
+    name: Build and test op-ufm
+    needs: files-changed
+    if: |
+      contains(needs.files-changed.outputs.all_modified_files, 'op-ufm') ||
+      contains(needs.files-changed.outputs.all_modified_files, ',go.mod')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: op-ufm
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Lint code
+        run: |
+          make generate || go generate ./...
+          go mod tidy && git diff --exit-code
+          if [ -f .golangci.yml ]; then
+            golangci-lint run -c .golangci.yml -E goimports,sqlclosecheck,bodyclose,asciicheck,misspell,errorlint -e "errors.As" -e "errors.Is" --timeout "3m0s" ./...
+          else
+            golangci-lint run -E goimports,sqlclosecheck,bodyclose,asciicheck,misspell,errorlint -e "errors.As" -e "errors.Is" --timeout "3m0s" ./...
+          fi
+      - name: Run tests
+        run: |
+          go version
+          mkdir -p /tmp/test-results
+          gotestsum --format=standard-verbose --junitfile=/tmp/test-results/op-ufm.xml \
+            -- -coverpkg=github.com/ethereum-optimism/infrastructure-services/... -coverprofile=coverage.out ./...
+
+  proxyd:
+    name: Build and test proxyd
+    needs: files-changed
+    if: |
+      contains(needs.files-changed.outputs.all_modified_files, 'proxyd') ||
+      contains(needs.files-changed.outputs.all_modified_files, ',go.mod')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: proxyd
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Lint code
+        run: |
+          make generate || go generate ./...
+          go mod tidy && git diff --exit-code
+          if [ -f .golangci.yml ]; then
+            golangci-lint run -c .golangci.yml -E goimports,sqlclosecheck,bodyclose,asciicheck,misspell,errorlint -e "errors.As" -e "errors.Is" --timeout "3m0s" ./...
+          else
+            golangci-lint run -E goimports,sqlclosecheck,bodyclose,asciicheck,misspell,errorlint -e "errors.As" -e "errors.Is" --timeout "3m0s" ./...
+          fi
+      - name: Run tests
+        run: |
+          go version
+          mkdir -p /tmp/test-results
+          gotestsum --format=standard-verbose --junitfile=/tmp/test-results/proxyd.xml \
+            -- -coverpkg=github.com/ethereum-optimism/infrastructure-services/... -coverprofile=coverage.out ./...
