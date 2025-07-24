@@ -866,14 +866,14 @@ func (s *Server) CheckSanctionedAddresses(ctx context.Context, req *RPCReq) erro
 	}
 
 	if _, ok := s.sanctionedAddresses[*from]; ok {
-		log.Debug("sender is sanctioned", "sender", from, "req_id", GetReqID(ctx))
+		log.Info("sender is sanctioned", "sender", from, "req_id", GetReqID(ctx))
 		return ErrNoBackends
 	}
 	to := tx.To()
 	// Create transactions do not have a "to" address so in this case "to" can be nil.
 	if to != nil {
 		if _, ok := s.sanctionedAddresses[*to]; ok {
-			log.Debug("recipient is sanctioned", "recipient", to, "req_id", GetReqID(ctx))
+			log.Info("recipient is sanctioned", "recipient", to, "req_id", GetReqID(ctx))
 			return ErrNoBackends
 		}
 	}
