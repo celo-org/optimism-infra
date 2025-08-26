@@ -204,6 +204,16 @@ var (
 		Help:      "Count of total batch RPC short-circuits.",
 	})
 
+	missingTrieNodeRetriesTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: MetricsNamespace,
+		Name:      "missing_trie_node_retries_total",
+		Help:      "Count of requests retried due to missing trie node errors.",
+	}, []string{
+		"auth",
+		"backend_group",
+		"success",
+	})
+
 	rpcSpecialErrors = []string{
 		"nonce too low",
 		"gas price too high",
@@ -478,6 +488,10 @@ func RecordWSMessage(ctx context.Context, backendName, source string) {
 
 func RecordUnserviceableRequest(ctx context.Context, source string) {
 	unserviceableRequestsTotal.WithLabelValues(GetAuthCtx(ctx), source).Inc()
+}
+
+func RecordMissingTrieNodeRetry(ctx context.Context, backendGroup string, success bool) {
+	missingTrieNodeRetriesTotal.WithLabelValues(GetAuthCtx(ctx), backendGroup, strconv.FormatBool(success)).Inc()
 }
 
 func RecordRPCForward(ctx context.Context, backendName, method, source string) {
