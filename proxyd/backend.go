@@ -1514,6 +1514,8 @@ func (bg *BackendGroup) ForwardRequestToBackendGroup(
 	ctx context.Context,
 	isBatch bool,
 ) *BackendGroupRPCResponse {
+	var lastMissingTrieNodeResponse *BackendGroupRPCResponse
+
 	for _, back := range backends {
 		res := make([]*RPCRes, 0)
 		var err error
@@ -1570,11 +1572,120 @@ func (bg *BackendGroup) ForwardRequestToBackendGroup(
 			}
 		}
 
+		// Check if any response contains a "missing trie node" error
+		if containsMissingTrieNodeError(res) {
+			log.Warn(
+				"backend returned missing trie node error",
+				"name", back.Name,
+				"req_id", GetReqID(ctx),
+				"auth", GetAuthCtx(ctx),
+			)
+
+			// Store this response in case we need to return it later
+			lastMissingTrieNodeResponse = &BackendGroupRPCResponse{
+				RPCRes:   res,
+				ServedBy: servedBy,
+				error:    nil,
+			}
+
+			// If this backend is not an archive node, continue to try archive backends
+			if !back.archive {
+				continue
+			}
+		}
+
 		return &BackendGroupRPCResponse{
 			RPCRes:   res,
 			ServedBy: servedBy,
 			error:    nil,
 		}
+	}
+
+	// If we have a missing trie node response but no archive backend could handle it,
+	// try with archive backends only
+	if lastMissingTrieNodeResponse != nil {
+		log.Info(
+			"retrying request with archive backends only due to missing trie node error",
+			"req_id", GetReqID(ctx),
+			"auth", GetAuthCtx(ctx),
+		)
+
+		// Get archive backends
+		var archiveBackends []*Backend
+		for _, backend := range bg.Backends {
+			if backend.archive {
+				archiveBackends = append(archiveBackends, backend)
+			}
+		}
+
+		// Try archive backends
+		for _, back := range archiveBackends {
+			res := make([]*RPCRes, 0)
+			var err error
+
+			servedBy := fmt.Sprintf("%s/%s", bg.Name, back.Name)
+
+			if len(rpcReqs) > 0 {
+				res, err = back.Forward(ctx, rpcReqs, isBatch)
+
+				if errors.Is(err, ErrBackendOffline) {
+					log.Warn(
+						"skipping offline archive backend",
+						"name", back.Name,
+						"auth", GetAuthCtx(ctx),
+						"req_id", GetReqID(ctx),
+					)
+					continue
+				}
+				if errors.Is(err, ErrBackendOverCapacity) {
+					log.Warn(
+						"skipping over-capacity archive backend",
+						"name", back.Name,
+						"auth", GetAuthCtx(ctx),
+						"req_id", GetReqID(ctx),
+					)
+					continue
+				}
+				if err != nil {
+					log.Error(
+						"error forwarding request to archive backend",
+						"name", back.Name,
+						"req_id", GetReqID(ctx),
+						"auth", GetAuthCtx(ctx),
+						"err", err,
+					)
+					continue
+				}
+			}
+
+			log.Info(
+				"successfully served request with archive backend after missing trie node error",
+				"name", back.Name,
+				"req_id", GetReqID(ctx),
+				"auth", GetAuthCtx(ctx),
+			)
+
+			// Record successful retry
+			RecordMissingTrieNodeRetry(ctx, bg.Name, true)
+
+			return &BackendGroupRPCResponse{
+				RPCRes:   res,
+				ServedBy: servedBy,
+				error:    nil,
+			}
+		}
+
+		// If no archive backend worked, return the original missing trie node response
+		log.Warn(
+			"no archive backend available to retry missing trie node error",
+			"req_id", GetReqID(ctx),
+			"auth", GetAuthCtx(ctx),
+		)
+
+		// Record failed retry
+		RecordMissingTrieNodeRetry(ctx, bg.Name, false)
+
+		return lastMissingTrieNodeResponse
 	}
 
 	RecordUnserviceableRequest(ctx, RPCRequestSourceHTTP)
@@ -1673,6 +1784,20 @@ func requiresArchiveForBlock(blockParam string, latestBlockNumber hexutil.Uint64
 		latestBlock := uint64(latestBlockNumber)
 		if latestBlock > 0 && blockNum.Uint64() <= latestBlock-blocksInStateFullNode {
 			return true
+		}
+	}
+	return false
+}
+
+// containsMissingTrieNodeError checks if any RPC response contains a "missing trie node" error
+func containsMissingTrieNodeError(responses []*RPCRes) bool {
+	for _, res := range responses {
+		if res != nil && res.IsError() && res.Error != nil {
+			// Check both the message and data fields for the missing trie node error
+			if strings.Contains(res.Error.Message, "missing trie node") ||
+				strings.Contains(res.Error.Data, "missing trie node") {
+				return true
+			}
 		}
 	}
 	return false
