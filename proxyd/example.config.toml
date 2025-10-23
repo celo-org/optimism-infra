@@ -102,6 +102,11 @@ backends = ["infura"]
 # consensus_max_block_range = 20000
 # Minimum peer count, default 3
 # consensus_min_peer_count = 4
+# Restrict archive node traffic to only archive-required requests, default false
+# When enabled, archive backends (archive=true) will only receive traffic for:
+# - Requests that explicitly require archive data (old blocks, blockHash queries)
+# - Regular requests when no non-archive backends are available (fallback)
+# restrict_archive_node_traffic = true
 
 [backend_groups.alchemy]
 backends = ["alchemy"]

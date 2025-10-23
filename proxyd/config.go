@@ -185,7 +185,8 @@ type BackendGroupConfig struct {
 	ConsensusHALockPeriod        TOMLDuration `toml:"consensus_ha_lock_period"`
 	ConsensusHARedis             RedisConfig  `toml:"consensus_ha_redis"`
 
-	Fallbacks []string `toml:"fallbacks"`
+	Fallbacks                  []string `toml:"fallbacks"`
+	RestrictArchiveNodeTraffic bool     `toml:"restrict_archive_node_traffic"`
 }
 
 type BackendGroupsConfig map[string]*BackendGroupConfig
