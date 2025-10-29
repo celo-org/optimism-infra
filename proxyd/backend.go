@@ -769,13 +769,14 @@ func sortBatchRPCResponse(req []*RPCReq, res []*RPCRes) {
 }
 
 type BackendGroup struct {
-	Name             string
-	Backends         []*Backend
-	WeightedRouting  bool
-	SkipEIP1898      bool
-	Consensus        *ConsensusPoller
-	FallbackBackends map[string]bool
-	routingStrategy  RoutingStrategy
+	Name                       string
+	Backends                   []*Backend
+	WeightedRouting            bool
+	SkipEIP1898                bool
+	Consensus                  *ConsensusPoller
+	FallbackBackends           map[string]bool
+	routingStrategy            RoutingStrategy
+	RestrictArchiveNodeTraffic bool
 }
 
 func (bg *BackendGroup) GetRoutingStrategy() RoutingStrategy {
@@ -874,6 +875,19 @@ func (bg *BackendGroup) Forward(ctx context.Context, rpcReqs []*RPCReq, isBatch 
 			backends = archiveBackends
 		}
 		rpcArchiveRequestsTotal.Inc()
+	} else if bg.RestrictArchiveNodeTraffic {
+		// When restrict_archive_node_traffic is enabled and request doesn't require archive,
+		// prefer non-archive backends but fall back to archive backends if none available
+		var nonArchiveBackends []*Backend
+		for _, backend := range backends {
+			if !backend.archive {
+				nonArchiveBackends = append(nonArchiveBackends, backend)
+			}
+		}
+		if len(nonArchiveBackends) > 0 {
+			backends = nonArchiveBackends
+		}
+		// If no non-archive backends available, use archive backends as fallback (keep original backends list)
 	}
 
 	rpcRequestsTotal.Inc()
@@ -1514,7 +1528,7 @@ func (bg *BackendGroup) ForwardRequestToBackendGroup(
 	ctx context.Context,
 	isBatch bool,
 ) *BackendGroupRPCResponse {
-	var lastMissingTrieNodeResponse *BackendGroupRPCResponse
+	var lastArchiveRequiredResponse *BackendGroupRPCResponse
 
 	for _, back := range backends {
 		res := make([]*RPCRes, 0)
@@ -1572,26 +1586,25 @@ func (bg *BackendGroup) ForwardRequestToBackendGroup(
 			}
 		}
 
-		// Check if any response contains a "missing trie node" error
-		if containsMissingTrieNodeError(res) {
+		// Check if any response contains an error indicating archive data is required
+		if containsArchiveRequiredError(res) {
 			log.Warn(
-				"backend returned missing trie node error",
+				"backend returned error requiring archive data, will try next backend",
 				"name", back.Name,
 				"req_id", GetReqID(ctx),
 				"auth", GetAuthCtx(ctx),
 			)
 
 			// Store this response in case we need to return it later
-			lastMissingTrieNodeResponse = &BackendGroupRPCResponse{
+			lastArchiveRequiredResponse = &BackendGroupRPCResponse{
 				RPCRes:   res,
 				ServedBy: servedBy,
 				error:    nil,
 			}
 
-			// If this backend is not an archive node, continue to try archive backends
-			if !back.archive {
-				continue
-			}
+			// Archive-required errors should try other backends
+			// Archive nodes may have different retention policies
+			continue
 		}
 
 		return &BackendGroupRPCResponse{
@@ -1601,11 +1614,11 @@ func (bg *BackendGroup) ForwardRequestToBackendGroup(
 		}
 	}
 
-	// If we have a missing trie node response but no archive backend could handle it,
+	// If we have an archive-required error response but no archive backend could handle it,
 	// try with archive backends only
-	if lastMissingTrieNodeResponse != nil {
+	if lastArchiveRequiredResponse != nil {
 		log.Info(
-			"retrying request with archive backends only due to missing trie node error",
+			"retrying request with archive backends only due to archive-required error",
 			"req_id", GetReqID(ctx),
 			"auth", GetAuthCtx(ctx),
 		)
@@ -1658,8 +1671,19 @@ func (bg *BackendGroup) ForwardRequestToBackendGroup(
 				}
 			}
 
+			// Check if this archive backend also returned an archive-required error
+			if containsArchiveRequiredError(res) {
+				log.Warn(
+					"archive backend also returned archive-required error, trying next archive backend",
+					"name", back.Name,
+					"req_id", GetReqID(ctx),
+					"auth", GetAuthCtx(ctx),
+				)
+				continue
+			}
+
 			log.Info(
-				"successfully served request with archive backend after missing trie node error",
+				"successfully served request with archive backend after archive-required error",
 				"name", back.Name,
 				"req_id", GetReqID(ctx),
 				"auth", GetAuthCtx(ctx),
@@ -1675,9 +1699,9 @@ func (bg *BackendGroup) ForwardRequestToBackendGroup(
 			}
 		}
 
-		// If no archive backend worked, return the original missing trie node response
+		// If no archive backend worked, return the original archive-required error response
 		log.Warn(
-			"no archive backend available to retry missing trie node error",
+			"no archive backend available to retry archive-required error",
 			"req_id", GetReqID(ctx),
 			"auth", GetAuthCtx(ctx),
 		)
@@ -1685,7 +1709,7 @@ func (bg *BackendGroup) ForwardRequestToBackendGroup(
 		// Record failed retry
 		RecordMissingTrieNodeRetry(ctx, bg.Name, false)
 
-		return lastMissingTrieNodeResponse
+		return lastArchiveRequiredResponse
 	}
 
 	RecordUnserviceableRequest(ctx, RPCRequestSourceHTTP)
@@ -1789,13 +1813,21 @@ func requiresArchiveForBlock(blockParam string, latestBlockNumber hexutil.Uint64
 	return false
 }
 
-// containsMissingTrieNodeError checks if any RPC response contains a "missing trie node" error
-func containsMissingTrieNodeError(responses []*RPCRes) bool {
+// containsArchiveRequiredError checks if any RPC response contains an error that indicates
+// archive data is needed. This includes:
+// - "missing trie node" - node doesn't have the historical state
+// - "old data not available due to pruning" - data has been pruned
+// - "root hash mismatch witnessTrieRootHash" - witness trie root hash mismatch
+func containsArchiveRequiredError(responses []*RPCRes) bool {
 	for _, res := range responses {
 		if res != nil && res.IsError() && res.Error != nil {
-			// Check both the message and data fields for the missing trie node error
+			// Check both the message and data fields for errors requiring archive data
 			if strings.Contains(res.Error.Message, "missing trie node") ||
-				strings.Contains(res.Error.Data, "missing trie node") {
+				strings.Contains(res.Error.Data, "missing trie node") ||
+				strings.Contains(res.Error.Message, "old data not available due to pruning") ||
+				strings.Contains(res.Error.Data, "old data not available due to pruning") ||
+				strings.Contains(res.Error.Message, "root hash mismatch witnessTrieRootHash") ||
+				strings.Contains(res.Error.Data, "root hash mismatch witnessTrieRootHash") {
 				return true
 			}
 		}
