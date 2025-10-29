@@ -21,10 +21,10 @@ jobs:
       - name: Remove proxyd- prefix from tag
         id: remove-proxyd-prefix
         run: echo "::set-output name=modified_tag::$(echo '${{ github.ref_name }}' | sed 's/^proxyd-//')"
-  
+
   build-container-proxyd-tag:
     needs: compute-tag-proxyd
-    uses: celo-org/reusable-workflows/.github/workflows/container-cicd.yaml@v2.0.4
+    uses: celo-org/reusable-workflows/.github/workflows/container-cicd.yaml@v3.0.1
     name: Build proxyd image container on tag
     permissions:
       contents: read
@@ -56,7 +56,7 @@ jobs:
 
   build-container-op-conductor-ops-tag:
     needs: compute-tag-op-conductor-ops
-    uses: celo-org/reusable-workflows/.github/workflows/container-cicd.yaml@v2.0.4
+    uses: celo-org/reusable-workflows/.github/workflows/container-cicd.yaml@v3.0.1
     name: Build op-conductor-ops image container on tag
     permissions:
       contents: read
