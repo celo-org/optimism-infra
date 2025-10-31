@@ -542,13 +542,21 @@ func TestRewriteRequest(t *testing.T) {
 		{
 			name: "eth_getBlockByNumber out of range",
 			args: args{
-				rctx:        RewriteContext{latest: hexutil.Uint64(100)},
-				req:         &RPCReq{Method: "eth_getBlockByNumber", Params: mustMarshalJSON([]string{hexutil.Uint64(111).String()})},
-				res:         nil,
+				rctx: RewriteContext{latest: hexutil.Uint64(100)},
+				req: &RPCReq{
+					Method: "eth_getBlockByNumber",
+					Params: mustMarshalJSON([]string{hexutil.Uint64(111).String()}),
+					ID:     json.RawMessage("1"),
+				},
+				res:         &RPCRes{JSONRPC: JSONRPCVersion, ID: json.RawMessage("1")},
 				skipeip1898: false,
 			},
-			expected:    RewriteOverrideError,
-			expectedErr: ErrRewriteBlockOutOfRange,
+			expected: RewriteOverrideResponse,
+			check: func(t *testing.T, args args) {
+				require.NotNil(t, args.res)
+				require.Nil(t, args.res.Error)
+				require.Nil(t, args.res.Result)
+			},
 		},
 		{
 			name: "eth_getStorageAt using rpc.BlockNumberOrHash",

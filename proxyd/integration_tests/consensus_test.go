@@ -758,13 +758,16 @@ func TestConsensus(t *testing.T) {
 
 		resRaw, statusCode, err := client.SendRPC("eth_getBlockByNumber", []interface{}{"0x300"})
 		require.NoError(t, err)
-		require.Equal(t, 400, statusCode)
+		require.Equal(t, 200, statusCode)
 
 		var jsonMap map[string]interface{}
 		err = json.Unmarshal(resRaw, &jsonMap)
 		require.NoError(t, err)
-		require.Equal(t, -32019, int(jsonMap["error"].(map[string]interface{})["code"].(float64)))
-		require.Equal(t, "block is out of range", jsonMap["error"].(map[string]interface{})["message"])
+		res, ok := jsonMap["result"]
+		require.True(t, ok)
+		require.Nil(t, res)
+		_, hasErr := jsonMap["error"]
+		require.False(t, hasErr)
 	})
 
 	t.Run("batched rewrite", func(t *testing.T) {
@@ -786,9 +789,10 @@ func TestConsensus(t *testing.T) {
 		// rewrite latest to 0x101
 		require.Equal(t, "0x101", jsonMap[0]["result"].(map[string]interface{})["number"])
 
-		// out of bounds for block 0x102
-		require.Equal(t, -32019, int(jsonMap[1]["error"].(map[string]interface{})["code"].(float64)))
-		require.Equal(t, "block is out of range", jsonMap[1]["error"].(map[string]interface{})["message"])
+		// out of bounds for block 0x102 returns null
+		require.Nil(t, jsonMap[1]["result"])
+		_, hasErr := jsonMap[1]["error"]
+		require.False(t, hasErr)
 
 		// dont rewrite for 0xe1
 		require.Equal(t, "0xe1", jsonMap[2]["result"].(map[string]interface{})["number"])

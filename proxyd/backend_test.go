@@ -1,6 +1,7 @@
 package proxyd
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -205,6 +206,108 @@ func TestRequiresArchiveForBlock(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			result := requiresArchiveForBlock(test.blockParam, test.latest)
+			assert.Equal(t, test.expected, result)
+		})
+	}
+}
+
+func TestContainsArchiveRequiredError(t *testing.T) {
+	tests := []struct {
+		name     string
+		response *RPCRes
+		expected bool
+	}{
+		{
+			name: "missing trie node in message",
+			response: &RPCRes{
+				Error: &RPCErr{
+					Code:    -32000,
+					Message: "missing trie node",
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "missing trie node in data",
+			response: &RPCRes{
+				Error: &RPCErr{
+					Code: -32000,
+					Data: "missing trie node",
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "old data not available due to pruning in message",
+			response: &RPCRes{
+				Error: &RPCErr{
+					Code:    -32000,
+					Message: "old data not available due to pruning",
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "root hash mismatch witnessTrieRootHash in message",
+			response: &RPCRes{
+				Error: &RPCErr{
+					Code:    -32000,
+					Message: "root hash mismatch witnessTrieRootHash",
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "No state available in message",
+			response: &RPCRes{
+				Error: &RPCErr{
+					Code:    -32002,
+					Message: "No state available for block 9451636",
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "No state available in data",
+			response: &RPCRes{
+				Error: &RPCErr{
+					Code: -32002,
+					Data: "No state available for block 12345",
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "non-archive error",
+			response: &RPCRes{
+				Error: &RPCErr{
+					Code:    -32000,
+					Message: "some other error",
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "no error",
+			response: &RPCRes{
+				Result: json.RawMessage(`"0x123"`),
+			},
+			expected: false,
+		},
+		{
+			name:     "nil response",
+			response: nil,
+			expected: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			responses := []*RPCRes{}
+			if test.response != nil {
+				responses = append(responses, test.response)
+			}
+			result := containsArchiveRequiredError(responses)
 			assert.Equal(t, test.expected, result)
 		})
 	}
