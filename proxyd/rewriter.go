@@ -112,17 +112,21 @@ func rewriteParam(rctx RewriteContext, req *RPCReq, res *RPCRes, pos int, requir
 				// fallback to string
 				s, ok := p[pos].(string)
 				if ok {
-					val, rw, err = rewriteTag(rctx, s)
-					if err != nil {
-						return RewriteOverrideError, err
+					var tagErr error
+					val, rw, tagErr = rewriteTag(rctx, s)
+					result, handledErr := handleRewriteTagResult(req, res, tagErr)
+					if handledErr != nil || result != RewriteNone {
+						return result, handledErr
 					}
 				} else {
 					return RewriteOverrideError, errors.New("expected BlockNumberOrHash or string")
 				}
 			} else {
-				val, rw, err = rewriteTagBlockNumberOrHash(rctx, bnh)
-				if err != nil {
-					return RewriteOverrideError, err
+				var tagErr error
+				val, rw, tagErr = rewriteTagBlockNumberOrHash(rctx, bnh)
+				result, handledErr := handleRewriteTagResult(req, res, tagErr)
+				if handledErr != nil || result != RewriteNone {
+					return result, handledErr
 				}
 			}
 		} else {
@@ -134,9 +138,11 @@ func rewriteParam(rctx RewriteContext, req *RPCReq, res *RPCRes, pos int, requir
 			return RewriteOverrideError, errors.New("expected string")
 		}
 
-		val, rw, err = rewriteTag(rctx, s)
-		if err != nil {
-			return RewriteOverrideError, err
+		var tagErr error
+		val, rw, tagErr = rewriteTag(rctx, s)
+		result, handledErr := handleRewriteTagResult(req, res, tagErr)
+		if handledErr != nil || result != RewriteNone {
+			return result, handledErr
 		}
 	}
 
@@ -150,6 +156,35 @@ func rewriteParam(rctx RewriteContext, req *RPCReq, res *RPCRes, pos int, requir
 		return RewriteOverrideRequest, nil
 	}
 	return RewriteNone, nil
+}
+
+func handleRewriteTagResult(req *RPCReq, res *RPCRes, err error) (RewriteResult, error) {
+	if err == nil {
+		return RewriteNone, nil
+	}
+
+	if errors.Is(err, ErrRewriteBlockOutOfRange) && shouldReturnNullOnOutOfRange(req.Method) {
+		if res != nil {
+			res.Result = nil
+			res.Error = nil
+		}
+		return RewriteOverrideResponse, nil
+	}
+
+	return RewriteOverrideError, err
+}
+
+func shouldReturnNullOnOutOfRange(method string) bool {
+	switch method {
+	case "eth_getBlockByNumber",
+		"eth_getBlockTransactionCountByNumber",
+		"eth_getUncleCountByBlockNumber",
+		"eth_getTransactionByBlockNumberAndIndex",
+		"eth_getUncleByBlockNumberAndIndex":
+		return true
+	default:
+		return false
+	}
 }
 
 func rewriteRange(rctx RewriteContext, req *RPCReq, res *RPCRes, pos int) (RewriteResult, error) {
