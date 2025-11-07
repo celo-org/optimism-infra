@@ -22,7 +22,7 @@ jobs:
           separator: ','
 
   build-container-proxyd:
-    uses: celo-org/reusable-workflows/.github/workflows/container-cicd.yaml@v3.0.1
+    uses: celo-org/reusable-workflows/.github/workflows/docker-build.yaml@v3.0.1
     name: Build proxyd image container
     needs: detect-files-changed
     if: |
@@ -46,7 +46,7 @@ jobs:
       trivy: false
 
   build-container-op-conductor-ops:
-    uses: celo-org/reusable-workflows/.github/workflows/container-cicd.yaml@v3.0.1
+    uses: celo-org/reusable-workflows/.github/workflows/docker-build.yaml@v3.0.1
     name: Build op-conductor-ops image container
     needs: detect-files-changed
     if: |
