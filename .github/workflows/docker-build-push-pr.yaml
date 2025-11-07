@@ -32,9 +32,12 @@ jobs:
       contains(needs.detect-files-changed.outputs.files-changed, '.github/workflows/docker-build-push-tag.yaml') ||
       github.event_name == 'workflow_dispatch'
     permissions:
-      contents: read
-      id-token: write
+      actions: read
+      contents: write
+      pull-requests: write
       security-events: write
+      attestations: write
+      id-token: write
     with:
       artifact-registry: us-west1-docker.pkg.dev/devopsre/dev-images/proxyd
       tags: pr
@@ -43,7 +46,7 @@ jobs:
       service-account: optimism-infra@devopsre.iam.gserviceaccount.com
       context: .
       file: ./proxyd/Dockerfile
-      trivy: false
+      trivy-enabled: false
 
   build-container-op-conductor-ops:
     uses: celo-org/reusable-workflows/.github/workflows/docker-build.yaml@v3.0.1
@@ -56,9 +59,12 @@ jobs:
       contains(needs.detect-files-changed.outputs.files-changed, '.github/workflows/docker-build-push-tag.yaml') ||
       github.event_name == 'workflow_dispatch'
     permissions:
-      contents: read
-      id-token: write
+      actions: read
+      contents: write
+      pull-requests: write
       security-events: write
+      attestations: write
+      id-token: write
     with:
       artifact-registry: us-west1-docker.pkg.dev/devopsre/dev-images/op-conductor-ops
       tags: pr
@@ -67,4 +73,4 @@ jobs:
       service-account: optimism-infra@devopsre.iam.gserviceaccount.com
       context: .
       file: ./op-conductor-ops/Dockerfile
-      trivy: false
+      trivy-enabled: false
