@@ -1827,7 +1827,15 @@ func containsArchiveRequiredError(responses []*RPCRes) bool {
 				strings.Contains(res.Error.Message, "old data not available due to pruning") ||
 				strings.Contains(res.Error.Data, "old data not available due to pruning") ||
 				strings.Contains(res.Error.Message, "root hash mismatch witnessTrieRootHash") ||
-				strings.Contains(res.Error.Data, "root hash mismatch witnessTrieRootHash") {
+				strings.Contains(res.Error.Data, "root hash mismatch witnessTrieRootHash") ||
+				strings.Contains(res.Error.Message, "distance to target block exceeds maximum proof window") ||
+				strings.Contains(res.Error.Data, "distance to target block exceeds maximum proof window") ||
+				strings.Contains(res.Error.Message, "No state available for block") ||
+				strings.Contains(res.Error.Data, "No state available for block") ||
+				strings.Contains(res.Error.Message, "data before") && strings.Contains(res.Error.Message, "not available") ||
+				strings.Contains(res.Error.Data, "data before") && strings.Contains(res.Error.Data, "not available") ||
+				strings.Contains(res.Error.Message, "state at block") && strings.Contains(res.Error.Message, "is pruned") ||
+				strings.Contains(res.Error.Data, "state at block") && strings.Contains(res.Error.Data, "is pruned") {
 				return true
 			}
 		}
