@@ -482,7 +482,7 @@ func Start(config *Config) (*Server, func(), error) {
 	}
 
 	<-errTimer.C
-	log.Info("started proxyd now")
+	log.Info("started proxyd")
 
 	shutdownFunc := func() {
 		log.Info("shutting down proxyd")

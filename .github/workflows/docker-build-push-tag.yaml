@@ -24,7 +24,7 @@ jobs:
 
   build-container-proxyd-tag:
     needs: compute-tag-proxyd
-    uses: celo-org/reusable-workflows/.github/workflows/docker-build.yaml@v3.0.1
+    uses: celo-org/reusable-workflows/.github/workflows/docker-build.yaml@v3.1.0-rc.4
     name: Build proxyd image container on tag
     permissions:
       actions: read
@@ -59,7 +59,7 @@ jobs:
 
   build-container-op-conductor-ops-tag:
     needs: compute-tag-op-conductor-ops
-    uses: celo-org/reusable-workflows/.github/workflows/docker-build.yaml@v3.0.1
+    uses: celo-org/reusable-workflows/.github/workflows/docker-build.yaml@v3.1.0-rc.4
     name: Build op-conductor-ops image container on tag
     permissions:
       actions: read
