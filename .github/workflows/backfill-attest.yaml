@@ -1,0 +1,40 @@
+name: Backfill image attestation
+on:
+  workflow_dispatch:
+    inputs:
+      image_name:
+        description: Image name without tag
+        required: true
+        default: us-west1-docker.pkg.dev/devopsre/op-conductor-ops/op-conductor-ops
+      image_tag:
+        description: Image tag
+        required: true
+        default: v0.2.0
+jobs:
+  attest-image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Authenticate to Google Artifact Registry
+        uses: celo-org/reusable-workflows/.github/actions/auth-gcp-artifact-registry@v2.0
+        with:
+          workload-id-provider: projects/1094498259535/locations/global/workloadIdentityPools/gh-optimism-infra/providers/github-by-repos
+          service-account: optimism-infra@devopsre.iam.gserviceaccount.com
+          docker-gcp-registries: us-west1-docker.pkg.dev
+      - name: Set up crane
+        uses: imjasonh/setup-crane@v0.4
+      - name: Resolve image digest
+        id: digest
+        run: |
+          digest="$(crane digest "${{ inputs.image_name }}:${{ inputs.image_tag }}")"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+      - name: Attest image
+        uses: actions/attest@v4.1.0
+        with:
+          subject-name: ${{ inputs.image_name }}
+          subject-digest: ${{ steps.digest.outputs.digest }}
+          push-to-registry: true
