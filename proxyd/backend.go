@@ -1794,6 +1794,8 @@ func (bg *BackendGroup) OverwriteConsensusResponses(rpcReqs []*RPCReq, overridde
 		safe:          bg.Consensus.GetSafeBlockNumber(),
 		finalized:     bg.Consensus.GetFinalizedBlockNumber(),
 		maxBlockRange: bg.Consensus.maxBlockRange,
+		espressoTag:   bg.Consensus.espressoTag,
+		espresso:      bg.Consensus.GetEspressoBlockNumber(),
 	}
 
 	for i, req := range rpcReqs {

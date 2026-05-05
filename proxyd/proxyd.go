@@ -441,6 +441,9 @@ func Start(config *Config) (*Server, func(), error) {
 			if bgcfg.ConsensusPollerInterval > 0 {
 				copts = append(copts, WithPollerInterval(time.Duration(bgcfg.ConsensusPollerInterval)))
 			}
+			if bgcfg.ConsensusEspressoTag != "" {
+				copts = append(copts, WithEspressoTag(bgcfg.ConsensusEspressoTag))
+			}
 
 			for _, be := range bgcfg.Backends {
 				if fallback, ok := bg.FallbackBackends[be]; !ok {

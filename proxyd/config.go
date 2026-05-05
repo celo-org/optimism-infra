@@ -185,6 +185,12 @@ type BackendGroupConfig struct {
 	ConsensusHALockPeriod        TOMLDuration `toml:"consensus_ha_lock_period"`
 	ConsensusHARedis             RedisConfig  `toml:"consensus_ha_redis"`
 
+	// consensus_espresso_tag, if set, enables Espresso-finality consensus: the poller
+	// calls eth_getBlockByNumber(<tag>, false) on each backend each cycle and tracks
+	// the minimum resolved block across healthy backends. Requests containing this tag
+	// are rewritten to that consensus block number before forwarding.
+	ConsensusEspressoTag string `toml:"consensus_espresso_tag"`
+
 	Fallbacks                  []string `toml:"fallbacks"`
 	RestrictArchiveNodeTraffic bool     `toml:"restrict_archive_node_traffic"`
 	ArchiveBlockThreshold      uint64   `toml:"archive_block_threshold"`

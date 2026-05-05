@@ -1,0 +1,127 @@
+- method: eth_call
+  response: >
+    {
+      "jsonrpc": "2.0",
+      "id": 67,
+      "result": "0x"
+    }
+- method: eth_chainId
+  response: >
+    {
+      "jsonrpc": "2.0",
+      "id": 67,
+      "result": "hello"
+    }
+- method: net_peerCount
+  response: >
+    {
+      "jsonrpc": "2.0",
+      "id": 67,
+      "result": "0x10"
+    }
+- method: eth_syncing
+  response: >
+    {
+      "jsonrpc": "2.0",
+      "id": 67,
+      "result": false
+    }
+- method: eth_getBlockByNumber
+  block: latest
+  response: >
+    {
+      "jsonrpc": "2.0",
+      "id": 67,
+      "result": {
+        "hash": "hash_0x101",
+        "number": "0x101"
+      }
+    }
+- method: eth_getBlockByNumber
+  block: safe
+  response: >
+    {
+      "jsonrpc": "2.0",
+      "id": 67,
+      "result": {
+        "hash": "hash_0xe1",
+        "number": "0xe1"
+      }
+    }
+- method: eth_getBlockByNumber
+  block: finalized
+  response: >
+    {
+      "jsonrpc": "2.0",
+      "id": 67,
+      "result": {
+        "hash": "hash_0xc1",
+        "number": "0xc1"
+      }
+    }
+- method: eth_getBlockByNumber
+  block: espresso
+  response: >
+    {
+      "jsonrpc": "2.0",
+      "id": 67,
+      "result": {
+        "hash": "hash_0xa0",
+        "number": "0xa0"
+      }
+    }
+- method: eth_getBlockByNumber
+  block: 0x101
+  response: >
+    {
+      "jsonrpc": "2.0",
+      "id": 67,
+      "result": {
+        "hash": "hash_0x101",
+        "number": "0x101"
+      }
+    }
+- method: eth_getBlockByNumber
+  block: 0xa0
+  response: >
+    {
+      "jsonrpc": "2.0",
+      "id": 67,
+      "result": {
+        "hash": "hash_0xa0",
+        "number": "0xa0"
+      }
+    }
+- method: eth_getBlockByNumber
+  block: 0xe0
+  response: >
+    {
+      "jsonrpc": "2.0",
+      "id": 67,
+      "result": {
+        "hash": "hash_0xe0",
+        "number": "0xe0"
+      }
+    }
+- method: eth_getBlockByNumber
+  block: 0xe1
+  response: >
+    {
+      "jsonrpc": "2.0",
+      "id": 67,
+      "result": {
+        "hash": "hash_0xe1",
+        "number": "0xe1"
+      }
+    }
+- method: eth_getBlockByNumber
+  block: 0xc1
+  response: >
+    {
+      "jsonrpc": "2.0",
+      "id": 67,
+      "result": {
+        "hash": "hash_0xc1",
+        "number": "0xc1"
+      }
+    }

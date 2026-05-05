@@ -24,6 +24,8 @@ type ConsensusTracker interface {
 	SetSafeBlockNumber(blockNumber hexutil.Uint64)
 	GetFinalizedBlockNumber() hexutil.Uint64
 	SetFinalizedBlockNumber(blockNumber hexutil.Uint64)
+	GetEspressoBlockNumber() hexutil.Uint64
+	SetEspressoBlockNumber(blockNumber hexutil.Uint64)
 }
 
 // DTO to hold the current consensus state
@@ -31,6 +33,7 @@ type ConsensusTrackerState struct {
 	Latest    hexutil.Uint64 `json:"latest"`
 	Safe      hexutil.Uint64 `json:"safe"`
 	Finalized hexutil.Uint64 `json:"finalized"`
+	Espresso  hexutil.Uint64 `json:"espresso,omitempty"`
 }
 
 func (ct *InMemoryConsensusTracker) update(o *ConsensusTrackerState) {
@@ -40,6 +43,7 @@ func (ct *InMemoryConsensusTracker) update(o *ConsensusTrackerState) {
 	ct.state.Latest = o.Latest
 	ct.state.Safe = o.Safe
 	ct.state.Finalized = o.Finalized
+	ct.state.Espresso = o.Espresso
 }
 
 // InMemoryConsensusTracker store and retrieve in memory, async-safe
@@ -107,6 +111,20 @@ func (ct *InMemoryConsensusTracker) SetFinalizedBlockNumber(blockNumber hexutil.
 	ct.mutex.Lock()
 
 	ct.state.Finalized = blockNumber
+}
+
+func (ct *InMemoryConsensusTracker) GetEspressoBlockNumber() hexutil.Uint64 {
+	defer ct.mutex.Unlock()
+	ct.mutex.Lock()
+
+	return ct.state.Espresso
+}
+
+func (ct *InMemoryConsensusTracker) SetEspressoBlockNumber(blockNumber hexutil.Uint64) {
+	defer ct.mutex.Unlock()
+	ct.mutex.Lock()
+
+	ct.state.Espresso = blockNumber
 }
 
 // RedisConsensusTracker store and retrieve in a shared Redis cluster, with leader election
@@ -318,6 +336,14 @@ func (ct *RedisConsensusTracker) GetFinalizedBlockNumber() hexutil.Uint64 {
 
 func (ct *RedisConsensusTracker) SetFinalizedBlockNumber(blockNumber hexutil.Uint64) {
 	ct.local.SetFinalizedBlockNumber(blockNumber)
+}
+
+func (ct *RedisConsensusTracker) GetEspressoBlockNumber() hexutil.Uint64 {
+	return ct.remote.GetEspressoBlockNumber()
+}
+
+func (ct *RedisConsensusTracker) SetEspressoBlockNumber(blockNumber hexutil.Uint64) {
+	ct.local.SetEspressoBlockNumber(blockNumber)
 }
 
 func (ct *RedisConsensusTracker) postPayload(mutexVal string) {
