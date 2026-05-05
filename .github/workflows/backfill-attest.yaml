@@ -38,7 +38,7 @@ jobs:
           echo "$digest"
       - name: Echo
         run: |
-          echo "$digest"
+          echo "${{ inputs.image_name }}"
           echo "${{ steps.digest.outputs.digest }}"
       - name: Attest image
         uses: actions/attest@v4.1.0
