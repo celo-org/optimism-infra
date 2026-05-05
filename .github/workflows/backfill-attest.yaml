@@ -34,11 +34,11 @@ jobs:
         id: digest
         run: |
           digest="$(crane digest "${{ inputs.image_name }}:${{ inputs.image_tag }}")"
+          echo "Resolved digest: $digest"
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
       - name: Attest image
-        uses: actions/attest@v4.1.0
+        uses: actions/attest-build-provenance@v3.2.0
         with:
           subject-name: ${{ inputs.image_name }}
           subject-digest: ${{ steps.digest.outputs.digest }}
           push-to-registry: true
-          create-storage-record: false
