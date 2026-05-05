@@ -41,3 +41,4 @@ jobs:
           subject-name: ${{ inputs.image_name }}
           subject-digest: ${{ steps.digest.outputs.digest }}
           push-to-registry: true
+          create-storage-record: false
