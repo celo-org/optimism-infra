@@ -25,6 +25,9 @@ jobs:
           workload-id-provider: projects/1094498259535/locations/global/workloadIdentityPools/gh-optimism-infra/providers/github-by-repos
           service-account: optimism-infra@devopsre.iam.gserviceaccount.com
           docker-gcp-registries: us-west1-docker.pkg.dev
+      - name: Login Docker to Google Artifact Registry
+        run: |
+          gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin https://us-west1-docker.pkg.dev
       - name: Set up crane
         uses: imjasonh/setup-crane@v0.4
       - name: Resolve image digest
