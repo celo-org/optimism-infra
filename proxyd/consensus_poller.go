@@ -821,6 +821,10 @@ func (cp *ConsensusPoller) FilterCandidates(backends []*Backend) map[*Backend]*b
 		if bs.lastUpdate.Add(cp.maxUpdateThreshold).Before(time.Now()) {
 			continue
 		}
+		// espresso block is 0 (fetch failed), exclude until it recovers
+		if cp.espressoTag != "" && bs.espressoBlockNumber == 0 {
+			continue
+		}
 
 		candidates[be] = bs
 	}
