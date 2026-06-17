@@ -135,15 +135,25 @@ func anyBlocked(addrs []string, blocked map[common.Address]struct{}) bool {
 	return false
 }
 
+// consensusHeads holds the latest/safe/finalized agreed block numbers used to
+// resolve eth_getLogs block tags. known is false when no head is available (the
+// group isn't consensus-aware, or hasn't agreed on a head yet).
+type consensusHeads struct {
+	latest    uint64
+	safe      uint64
+	finalized uint64
+	known     bool
+}
+
 // blockSpan computes toBlock-fromBlock for the filter. ok is false when a bound
-// can't be resolved to a number (e.g. a tag requiring the chain head when the
-// head is unknown, or an inverted range), in which case the range isn't enforced.
-func blockSpan(f *getLogsFilter, head uint64, headKnown bool) (uint64, bool) {
-	from, ok := resolveLogBlock(f.fromBlock, head, headKnown)
+// can't be resolved to a number (e.g. a tag requiring a chain head that isn't
+// known, or an inverted range), in which case the range isn't enforced.
+func blockSpan(f *getLogsFilter, heads consensusHeads) (uint64, bool) {
+	from, ok := resolveLogBlock(f.fromBlock, heads)
 	if !ok {
 		return 0, false
 	}
-	to, ok := resolveLogBlock(f.toBlock, head, headKnown)
+	to, ok := resolveLogBlock(f.toBlock, heads)
 	if !ok {
 		return 0, false
 	}
@@ -155,14 +165,20 @@ func blockSpan(f *getLogsFilter, head uint64, headKnown bool) (uint64, bool) {
 
 // resolveLogBlock turns a fromBlock/toBlock value into a concrete block number.
 // An empty value defaults to "latest" (the eth_getLogs default for both bounds).
-// ok is false when the value needs the chain head but it isn't known, or when it
-// isn't a recognizable tag or hex quantity.
-func resolveLogBlock(tag string, head uint64, headKnown bool) (uint64, bool) {
+// safe/finalized resolve against their own consensus heads, matching the tag
+// rewriting the consensus group applies before forwarding, so a finalized-anchored
+// range isn't measured against the (higher) latest head. ok is false when the
+// value needs a head that isn't known, or isn't a recognizable tag or hex quantity.
+func resolveLogBlock(tag string, heads consensusHeads) (uint64, bool) {
 	switch tag {
-	case "", "latest", "safe", "finalized":
-		return head, headKnown
+	case "", "latest":
+		return heads.latest, heads.known
 	case "pending":
-		return head + 1, headKnown
+		return heads.latest + 1, heads.known
+	case "safe":
+		return heads.safe, heads.known && heads.safe > 0
+	case "finalized":
+		return heads.finalized, heads.known && heads.finalized > 0
 	case "earliest":
 		return 0, true
 	default:
@@ -204,8 +220,7 @@ func (s *Server) applyEthGetLogsPolicy(ctx context.Context, req *RPCReq, group s
 	// Block range too large. A blockHash query targets a single block, so it has
 	// no range to cap.
 	if lim.maxBlockRange > 0 && f.blockHash == "" {
-		head, headKnown := s.consensusHead(group)
-		if span, ok := blockSpan(f, head, headKnown); ok && span > lim.maxBlockRange {
+		if span, ok := blockSpan(f, s.headsForGroup(group)); ok && span > lim.maxBlockRange {
 			log.Info("eth_getLogs block range exceeds limit",
 				"span", span, "limit", lim.maxBlockRange, "req_id", GetReqID(ctx))
 			RecordEthGetLogsPolicy(ethGetLogsReasonRangeExceeded)
@@ -216,14 +231,23 @@ func (s *Server) applyEthGetLogsPolicy(ctx context.Context, req *RPCReq, group s
 	return nil, nil
 }
 
-// consensusHead returns the latest agreed block number for the backend group
-// routing this method, when that group is consensus-aware. headKnown is false
-// when there is no head available to resolve block tags against.
-func (s *Server) consensusHead(group string) (head uint64, headKnown bool) {
+// headsForGroup returns the latest/safe/finalized agreed block numbers for the
+// backend group routing this method. The result has known=false when the group
+// isn't consensus-aware or hasn't agreed on a head yet, so block tags are left
+// unresolved (and the range simply not enforced) rather than guessed.
+func (s *Server) headsForGroup(group string) consensusHeads {
 	bg, ok := s.BackendGroups[group]
 	if !ok || bg == nil || bg.Consensus == nil {
-		return 0, false
+		return consensusHeads{}
 	}
-	head = uint64(bg.Consensus.GetLatestBlockNumber())
-	return head, head > 0
+	latest := uint64(bg.Consensus.GetLatestBlockNumber())
+	if latest == 0 {
+		return consensusHeads{}
+	}
+	return consensusHeads{
+		latest:    latest,
+		safe:      uint64(bg.Consensus.GetSafeBlockNumber()),
+		finalized: uint64(bg.Consensus.GetFinalizedBlockNumber()),
+		known:     true,
+	}
 }

@@ -69,27 +69,34 @@ func TestAnyBlocked(t *testing.T) {
 }
 
 func TestBlockSpan(t *testing.T) {
+	// latest=12000, safe=10000, finalized=9000 mirrors a chain where safe/finalized
+	// lag latest.
+	lagging := consensusHeads{latest: 12000, safe: 10000, finalized: 9000, known: true}
+
 	tests := []struct {
-		name      string
-		from, to  string
-		head      uint64
-		headKnown bool
-		wantSpan  uint64
-		wantOK    bool
+		name     string
+		from, to string
+		heads    consensusHeads
+		wantSpan uint64
+		wantOK   bool
 	}{
 		{name: "numeric range", from: "0x10", to: "0x20", wantSpan: 0x10, wantOK: true},
 		{name: "earliest to number", from: "earliest", to: "0x64", wantSpan: 100, wantOK: true},
-		{name: "latest with head", from: "0x0", to: "latest", head: 50, headKnown: true, wantSpan: 50, wantOK: true},
-		{name: "latest without head not resolvable", from: "0x0", to: "latest", headKnown: false, wantOK: false},
-		{name: "absent bounds default latest", from: "", to: "", head: 0, headKnown: true, wantSpan: 0, wantOK: true},
-		{name: "pending", from: "0x0", to: "pending", head: 9, headKnown: true, wantSpan: 10, wantOK: true},
+		{name: "latest with head", from: "0x0", to: "latest", heads: consensusHeads{latest: 50, known: true}, wantSpan: 50, wantOK: true},
+		{name: "latest without head not resolvable", from: "0x0", to: "latest", wantOK: false},
+		{name: "absent bounds default latest", from: "", to: "", heads: consensusHeads{latest: 0, known: true}, wantSpan: 0, wantOK: true},
+		{name: "pending", from: "0x0", to: "pending", heads: consensusHeads{latest: 9, known: true}, wantSpan: 10, wantOK: true},
+		// finalized/safe resolve against their own heads, not latest.
+		{name: "finalized uses finalized head", from: "0x2000", to: "finalized", heads: lagging, wantSpan: 9000 - 0x2000, wantOK: true},
+		{name: "safe uses safe head", from: "safe", to: "latest", heads: lagging, wantSpan: 2000, wantOK: true},
+		{name: "finalized unknown not resolvable", from: "0x0", to: "finalized", heads: consensusHeads{latest: 100, known: true}, wantOK: false},
 		{name: "inverted range not ok", from: "0x20", to: "0x10", wantOK: false},
 		{name: "unparseable bound not ok", from: "0xzz", to: "0x10", wantOK: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &getLogsFilter{fromBlock: tt.from, toBlock: tt.to}
-			span, ok := blockSpan(f, tt.head, tt.headKnown)
+			span, ok := blockSpan(f, tt.heads)
 			require.Equal(t, tt.wantOK, ok)
 			if tt.wantOK {
 				require.Equal(t, tt.wantSpan, span)
