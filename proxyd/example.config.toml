@@ -132,6 +132,24 @@ secret = "test"
 #   "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
 # ]
 
+# Address blocking and range/count limits for eth_getLogs requests.
+[eth_get_logs]
+# Queries whose 'address' filter targets one of these addresses are served an
+# empty result ([]) without hitting a backend. Default: none.
+# blocked_addresses = [
+#   "0x2ca1bf1a40e2b77608345eeb5dea41cdc071d43c",
+# ]
+# Reject queries whose block range (toBlock - fromBlock) exceeds this. Tag bounds
+# (latest/earliest/...) are resolved against the consensus head when available.
+# Default: 1000. Set higher to effectively disable.
+# max_block_range = 1000
+# Reject queries with more than this many addresses in the 'address' filter.
+# Default: 5.
+# max_address_count = 5
+# Error message returned when a query exceeds max_block_range or max_address_count.
+# Default: "query exceeds range, retry smaller".
+# error_message = "query exceeds range, retry smaller"
+
 # Mapping of methods to backend groups.
 [rpc_method_mappings]
 eth_call = "main"

@@ -53,6 +53,14 @@ var (
 		"source",
 	})
 
+	ethGetLogsPolicyTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: MetricsNamespace,
+		Name:      "eth_get_logs_policy_total",
+		Help:      "Count of eth_getLogs requests affected by address blocking or range/count limits, by reason.",
+	}, []string{
+		"reason",
+	})
+
 	rpcBackendHTTPResponseCodesTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: MetricsNamespace,
 		Name:      "rpc_backend_http_response_codes_total",
@@ -492,6 +500,10 @@ func RecordUnserviceableRequest(ctx context.Context, source string) {
 
 func RecordMissingTrieNodeRetry(ctx context.Context, backendGroup string, success bool) {
 	missingTrieNodeRetriesTotal.WithLabelValues(GetAuthCtx(ctx), backendGroup, strconv.FormatBool(success)).Inc()
+}
+
+func RecordEthGetLogsPolicy(reason string) {
+	ethGetLogsPolicyTotal.WithLabelValues(reason).Inc()
 }
 
 func RecordRPCForward(ctx context.Context, backendName, method, source string) {
