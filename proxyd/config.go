@@ -209,6 +209,17 @@ type SenderRateLimitConfig struct {
 	AllowedChainIds []*big.Int `toml:"allowed_chain_ids"`
 }
 
+// EthGetLogsConfig configures address blocking and range/count limits for
+// eth_getLogs requests. Queries targeting a blocked address are served an empty
+// result; queries exceeding max_block_range or max_address_count are rejected.
+// max_block_range and max_address_count default to 1000 and 5 when unset.
+type EthGetLogsConfig struct {
+	BlockedAddresses []string `toml:"blocked_addresses"`
+	MaxBlockRange    uint64   `toml:"max_block_range"`
+	MaxAddressCount  int      `toml:"max_address_count"`
+	ErrorMessage     string   `toml:"error_message"`
+}
+
 type Config struct {
 	WSBackendGroup        string                `toml:"ws_backend_group"`
 	Server                ServerConfig          `toml:"server"`
@@ -228,6 +239,7 @@ type Config struct {
 	SenderRateLimit       SenderRateLimitConfig `toml:"sender_rate_limit"`
 	SanctionedAddresses   []string              `toml:"sanctioned_addresses"`
 	WatchedAddresses      []string              `toml:"watched_addresses"`
+	EthGetLogs            EthGetLogsConfig      `toml:"eth_get_logs"`
 }
 
 func ReadFromEnvOrConfig(value string) (string, error) {

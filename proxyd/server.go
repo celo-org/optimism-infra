@@ -85,6 +85,7 @@ type Server struct {
 	rateLimitHeader        string
 	sanctionedAddresses    map[common.Address]struct{}
 	watchedAddresses       map[common.Address]struct{}
+	ethGetLogs             ethGetLogsLimits
 }
 
 type limiterFunc func(method string) bool
@@ -108,6 +109,7 @@ func NewServer(
 	redisClient *redis.Client,
 	sanctionedAddresses map[common.Address]struct{},
 	watchedAddresses map[common.Address]struct{},
+	ethGetLogs ethGetLogsLimits,
 ) (*Server, error) {
 	if cache == nil {
 		cache = &NoopRPCCache{}
@@ -210,6 +212,7 @@ func NewServer(
 		rateLimitHeader:        rateLimitHeader,
 		sanctionedAddresses:    sanctionedAddresses,
 		watchedAddresses:       watchedAddresses,
+		ethGetLogs:             ethGetLogs,
 	}, nil
 }
 
@@ -647,6 +650,19 @@ func (s *Server) handleBatchRPC(ctx context.Context, reqs []json.RawMessage, isL
 			if err := s.rateLimitSender(ctx, parsedReq); err != nil {
 				RecordRPCError(ctx, BackendProxyd, parsedReq.Method, err)
 				responses[i] = NewRPCErrorRes(parsedReq.ID, err)
+				continue
+			}
+		}
+
+		// Apply eth_getLogs address blocking and range/count limits. A blocked
+		// address is served an empty result; an over-limit query is rejected.
+		if parsedReq.Method == "eth_getLogs" {
+			if res, rpcErr := s.applyEthGetLogsPolicy(ctx, parsedReq, group); rpcErr != nil {
+				RecordRPCError(ctx, BackendProxyd, parsedReq.Method, rpcErr)
+				responses[i] = NewRPCErrorRes(parsedReq.ID, rpcErr)
+				continue
+			} else if res != nil {
+				responses[i] = res
 				continue
 			}
 		}

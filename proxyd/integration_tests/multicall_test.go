@@ -116,7 +116,9 @@ func setServerBackend(s *proxyd.Server, nm map[string]nodeContext) *proxyd.Serve
 }
 
 func nodeBackendRequestCount(nodes map[string]nodeContext, node string) int {
-	return len(nodes[node].mockBackend.requests)
+	// Requests() copies under the backend's lock; reading the slice directly
+	// races with the handler goroutines that append to it.
+	return len(nodes[node].mockBackend.Requests())
 }
 
 func TestMulticall(t *testing.T) {
@@ -146,9 +148,16 @@ func TestMulticall(t *testing.T) {
 		require.NoError(t, json.NewDecoder(resp.Body).Decode(rpcRes))
 		require.False(t, rpcRes.IsError())
 
-		require.Equal(t, 1, nodeBackendRequestCount(nodes, "node1"))
-		require.Equal(t, 1, nodeBackendRequestCount(nodes, "node2"))
-		require.Equal(t, 1, nodeBackendRequestCount(nodes, "node3"))
+		// Multicall dispatches to every backend concurrently and can respond as
+		// soon as a winner is found, so the other backends may still be in flight
+		// when the response is written. Wait for all three to record their request
+		// rather than asserting immediately.
+		require.Eventually(t, func() bool {
+			return nodeBackendRequestCount(nodes, "node1") == 1 &&
+				nodeBackendRequestCount(nodes, "node2") == 1 &&
+				nodeBackendRequestCount(nodes, "node3") == 1
+		}, 5*time.Second, 10*time.Millisecond,
+			"each backend should receive exactly one request")
 	})
 
 	t.Run("When all of the backends return non 200, multicall should return 503", func(t *testing.T) {
@@ -181,9 +190,16 @@ func TestMulticall(t *testing.T) {
 		require.Equal(t, proxyd.ErrNoBackends.Code, rpcRes.Error.Code)
 		require.Equal(t, proxyd.ErrNoBackends.Message, rpcRes.Error.Message)
 
-		require.Equal(t, 1, nodeBackendRequestCount(nodes, "node1"))
-		require.Equal(t, 1, nodeBackendRequestCount(nodes, "node2"))
-		require.Equal(t, 1, nodeBackendRequestCount(nodes, "node3"))
+		// Multicall dispatches to every backend concurrently and can respond as
+		// soon as a winner is found, so the other backends may still be in flight
+		// when the response is written. Wait for all three to record their request
+		// rather than asserting immediately.
+		require.Eventually(t, func() bool {
+			return nodeBackendRequestCount(nodes, "node1") == 1 &&
+				nodeBackendRequestCount(nodes, "node2") == 1 &&
+				nodeBackendRequestCount(nodes, "node3") == 1
+		}, 5*time.Second, 10*time.Millisecond,
+			"each backend should receive exactly one request")
 	})
 
 	t.Run("It should return the first 200 response", func(t *testing.T) {
@@ -233,9 +249,16 @@ func TestMulticall(t *testing.T) {
 		require.False(t, rpcRes.IsError())
 
 		wg.Wait()
-		require.Equal(t, 1, nodeBackendRequestCount(nodes, "node1"))
-		require.Equal(t, 1, nodeBackendRequestCount(nodes, "node2"))
-		require.Equal(t, 1, nodeBackendRequestCount(nodes, "node3"))
+		// Multicall dispatches to every backend concurrently and can respond as
+		// soon as a winner is found, so the other backends may still be in flight
+		// when the response is written. Wait for all three to record their request
+		// rather than asserting immediately.
+		require.Eventually(t, func() bool {
+			return nodeBackendRequestCount(nodes, "node1") == 1 &&
+				nodeBackendRequestCount(nodes, "node2") == 1 &&
+				nodeBackendRequestCount(nodes, "node3") == 1
+		}, 5*time.Second, 10*time.Millisecond,
+			"each backend should receive exactly one request")
 	})
 
 	t.Run("Ensure application level error is returned to caller if its first", func(t *testing.T) {
@@ -284,9 +307,16 @@ func TestMulticall(t *testing.T) {
 
 		wg.Wait()
 
-		require.Equal(t, 1, nodeBackendRequestCount(nodes, "node1"))
-		require.Equal(t, 1, nodeBackendRequestCount(nodes, "node2"))
-		require.Equal(t, 1, nodeBackendRequestCount(nodes, "node3"))
+		// Multicall dispatches to every backend concurrently and can respond as
+		// soon as a winner is found, so the other backends may still be in flight
+		// when the response is written. Wait for all three to record their request
+		// rather than asserting immediately.
+		require.Eventually(t, func() bool {
+			return nodeBackendRequestCount(nodes, "node1") == 1 &&
+				nodeBackendRequestCount(nodes, "node2") == 1 &&
+				nodeBackendRequestCount(nodes, "node3") == 1
+		}, 5*time.Second, 10*time.Millisecond,
+			"each backend should receive exactly one request")
 	})
 
 	t.Run("It should ignore network errors and return a 200 from a slower request", func(t *testing.T) {
@@ -331,9 +361,16 @@ func TestMulticall(t *testing.T) {
 
 		require.Equal(t, resp.Header["X-Served-By"], []string{"node/node1"})
 		wg.Wait()
-		require.Equal(t, 1, nodeBackendRequestCount(nodes, "node1"))
-		require.Equal(t, 1, nodeBackendRequestCount(nodes, "node2"))
-		require.Equal(t, 1, nodeBackendRequestCount(nodes, "node3"))
+		// Multicall dispatches to every backend concurrently and can respond as
+		// soon as a winner is found, so the other backends may still be in flight
+		// when the response is written. Wait for all three to record their request
+		// rather than asserting immediately.
+		require.Eventually(t, func() bool {
+			return nodeBackendRequestCount(nodes, "node1") == 1 &&
+				nodeBackendRequestCount(nodes, "node2") == 1 &&
+				nodeBackendRequestCount(nodes, "node3") == 1
+		}, 5*time.Second, 10*time.Millisecond,
+			"each backend should receive exactly one request")
 	})
 
 	t.Run("When one of the backends times out", func(t *testing.T) {
@@ -375,9 +412,16 @@ func TestMulticall(t *testing.T) {
 		require.False(t, rpcRes.IsError())
 
 		wg.Wait()
-		require.Equal(t, 1, nodeBackendRequestCount(nodes, "node1"))
-		require.Equal(t, 1, nodeBackendRequestCount(nodes, "node2"))
-		require.Equal(t, 1, nodeBackendRequestCount(nodes, "node3"))
+		// Multicall dispatches to every backend concurrently and can respond as
+		// soon as a winner is found, so the other backends may still be in flight
+		// when the response is written. Wait for all three to record their request
+		// rather than asserting immediately.
+		require.Eventually(t, func() bool {
+			return nodeBackendRequestCount(nodes, "node1") == 1 &&
+				nodeBackendRequestCount(nodes, "node2") == 1 &&
+				nodeBackendRequestCount(nodes, "node3") == 1
+		}, 5*time.Second, 10*time.Millisecond,
+			"each backend should receive exactly one request")
 	})
 
 	t.Run("allBackends times out", func(t *testing.T) {
@@ -422,9 +466,16 @@ func TestMulticall(t *testing.T) {
 		require.Equal(t, rpcRes.Error.Code, proxyd.ErrNoBackends.Code)
 
 		wg.Wait()
-		require.Equal(t, 1, nodeBackendRequestCount(nodes, "node1"))
-		require.Equal(t, 1, nodeBackendRequestCount(nodes, "node2"))
-		require.Equal(t, 1, nodeBackendRequestCount(nodes, "node3"))
+		// Multicall dispatches to every backend concurrently and can respond as
+		// soon as a winner is found, so the other backends may still be in flight
+		// when the response is written. Wait for all three to record their request
+		// rather than asserting immediately.
+		require.Eventually(t, func() bool {
+			return nodeBackendRequestCount(nodes, "node1") == 1 &&
+				nodeBackendRequestCount(nodes, "node2") == 1 &&
+				nodeBackendRequestCount(nodes, "node3") == 1
+		}, 5*time.Second, 10*time.Millisecond,
+			"each backend should receive exactly one request")
 	})
 
 	t.Run("Test with many multi-calls in without resetting", func(t *testing.T) {

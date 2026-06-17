@@ -352,6 +352,7 @@ func Start(config *Config) (*Server, func(), error) {
 		redisClient,
 		sanctionedAddressesMap,
 		watchedAddressesMap,
+		newEthGetLogsLimits(config.EthGetLogs),
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("error creating server: %w", err)
