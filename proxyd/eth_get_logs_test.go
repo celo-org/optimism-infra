@@ -173,18 +173,14 @@ func TestApplyEthGetLogsPolicy(t *testing.T) {
 		res, rpcErr := s.applyEthGetLogsPolicy(ctx, getLogsReq(t, map[string]interface{}{"address": addrs}), "")
 		require.Nil(t, res)
 		require.NotNil(t, rpcErr)
-		require.Contains(t, rpcErr.Message, defaultEthGetLogsErrorMessage)
-		require.Contains(t, rpcErr.Message, "25") // configured max address count
-		require.Contains(t, rpcErr.Message, "26") // requested count
+		require.Equal(t, defaultEthGetLogsErrorMessage, rpcErr.Message)
 	})
 
 	t.Run("range exceeded rejected", func(t *testing.T) {
 		res, rpcErr := s.applyEthGetLogsPolicy(ctx, getLogsReq(t, map[string]interface{}{"fromBlock": "0x0", "toBlock": "0x1771"}), "") // 6001 blocks
 		require.Nil(t, res)
 		require.NotNil(t, rpcErr)
-		require.Contains(t, rpcErr.Message, defaultEthGetLogsErrorMessage)
-		require.Contains(t, rpcErr.Message, "5000") // configured max block range
-		require.Contains(t, rpcErr.Message, "6001") // requested span
+		require.Equal(t, defaultEthGetLogsErrorMessage, rpcErr.Message)
 	})
 
 	t.Run("range at limit allowed", func(t *testing.T) {

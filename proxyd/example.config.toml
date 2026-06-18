@@ -147,8 +147,6 @@ secret = "test"
 # Default: 5.
 # max_address_count = 5
 # Error message returned when a query exceeds max_block_range or max_address_count.
-# The exceeded limit and the requested value are appended, e.g.
-# "query exceeds range, retry smaller (max block range 1000, got 6001)".
 # Default: "query exceeds range, retry smaller".
 # error_message = "query exceeds range, retry smaller"
 
