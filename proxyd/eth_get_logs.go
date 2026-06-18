@@ -3,6 +3,7 @@ package proxyd
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -214,7 +215,8 @@ func (s *Server) applyEthGetLogsPolicy(ctx context.Context, req *RPCReq, group s
 		log.Info("eth_getLogs address count exceeds limit",
 			"count", len(f.addresses), "limit", lim.maxAddressCount, "req_id", GetReqID(ctx))
 		RecordEthGetLogsPolicy(ethGetLogsReasonAddressCountExceeded)
-		return nil, ErrInvalidParams(lim.errorMessage)
+		return nil, ErrInvalidParams(fmt.Sprintf("%s (max %d addresses per query, got %d)",
+			lim.errorMessage, lim.maxAddressCount, len(f.addresses)))
 	}
 
 	// Block range too large. A blockHash query targets a single block, so it has
@@ -224,7 +226,8 @@ func (s *Server) applyEthGetLogsPolicy(ctx context.Context, req *RPCReq, group s
 			log.Info("eth_getLogs block range exceeds limit",
 				"span", span, "limit", lim.maxBlockRange, "req_id", GetReqID(ctx))
 			RecordEthGetLogsPolicy(ethGetLogsReasonRangeExceeded)
-			return nil, ErrInvalidParams(lim.errorMessage)
+			return nil, ErrInvalidParams(fmt.Sprintf("%s (max block range %d, got %d)",
+				lim.errorMessage, lim.maxBlockRange, span))
 		}
 	}
 
