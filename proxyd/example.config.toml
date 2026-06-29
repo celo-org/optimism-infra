@@ -100,6 +100,11 @@ backends = ["infura"]
 # consensus_max_block_lag = 16
 # Maximum block range (for eth_getLogs method), no default
 # consensus_max_block_range = 20000
+# Maximum number of blocks behind head a block-addressed read may target, no default.
+# When set, requests whose block parameter is more than this many blocks behind the
+# latest block are rejected (applies to eth_call, eth_getBalance, eth_getCode,
+# eth_getTransactionCount, eth_getStorageAt, eth_getProof, and eth_getLogs from/toBlock).
+# consensus_max_blocks_back = 100000
 # Minimum peer count, default 3
 # consensus_min_peer_count = 4
 # Restrict archive node traffic to only archive-required requests, default false

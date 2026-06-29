@@ -1794,6 +1794,7 @@ func (bg *BackendGroup) OverwriteConsensusResponses(rpcReqs []*RPCReq, overridde
 		safe:          bg.Consensus.GetSafeBlockNumber(),
 		finalized:     bg.Consensus.GetFinalizedBlockNumber(),
 		maxBlockRange: bg.Consensus.maxBlockRange,
+		maxBlocksBack: bg.Consensus.maxBlocksBack,
 	}
 
 	for i, req := range rpcReqs {
@@ -1811,6 +1812,10 @@ func (bg *BackendGroup) OverwriteConsensusResponses(rpcReqs []*RPCReq, overridde
 			} else if errors.Is(err, ErrRewriteRangeTooLarge) {
 				res.Error = ErrInvalidParams(
 					fmt.Sprintf("block range greater than %d max", rctx.maxBlockRange),
+				)
+			} else if errors.Is(err, ErrRewriteBlockTooOld) {
+				res.Error = ErrInvalidParams(
+					fmt.Sprintf("block is more than %d blocks behind head", rctx.maxBlocksBack),
 				)
 			} else {
 				res.Error = ErrParseErr
