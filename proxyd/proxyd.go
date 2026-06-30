@@ -439,6 +439,9 @@ func Start(config *Config) (*Server, func(), error) {
 			if bgcfg.ConsensusMaxBlockRange > 0 {
 				copts = append(copts, WithMaxBlockRange(bgcfg.ConsensusMaxBlockRange))
 			}
+			if bgcfg.ConsensusMaxBlocksBack > 0 {
+				copts = append(copts, WithMaxBlocksBack(bgcfg.ConsensusMaxBlocksBack))
+			}
 			if bgcfg.ConsensusPollerInterval > 0 {
 				copts = append(copts, WithPollerInterval(time.Duration(bgcfg.ConsensusPollerInterval)))
 			}

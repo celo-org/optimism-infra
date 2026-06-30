@@ -221,6 +221,28 @@ func TestRewriteRequest(t *testing.T) {
 				require.Equal(t, hexutil.Uint64(100).String(), p[0]["toBlock"])
 			},
 		},
+		{
+			// state reads at this depth are rejected (see "eth_getCode too far behind
+			// head"), but getLogs is range-axis, not depth-axis, so it must be allowed.
+			name: "eth_getLogs fromBlock far behind head is not depth-limited",
+			args: args{
+				rctx:        RewriteContext{latest: hexutil.Uint64(100), maxBlocksBack: 30},
+				req:         &RPCReq{Method: "eth_getLogs", Params: mustMarshalJSON([]map[string]interface{}{{"fromBlock": hexutil.Uint64(50).String(), "toBlock": hexutil.Uint64(60).String()}})},
+				res:         nil,
+				skipeip1898: false,
+			},
+			expected: RewriteNone,
+		},
+		{
+			name: "eth_getLogs earliest is not depth-limited",
+			args: args{
+				rctx:        RewriteContext{latest: hexutil.Uint64(100), maxBlocksBack: 30},
+				req:         &RPCReq{Method: "eth_getLogs", Params: mustMarshalJSON([]map[string]interface{}{{"fromBlock": "earliest", "toBlock": hexutil.Uint64(60).String()}})},
+				res:         nil,
+				skipeip1898: false,
+			},
+			expected: RewriteNone,
+		},
 		/* required parameter at pos 0 */
 		{
 			name: "debug_getRawReceipts latest",
@@ -379,6 +401,38 @@ func TestRewriteRequest(t *testing.T) {
 			},
 			expected:    RewriteOverrideError,
 			expectedErr: ErrRewriteBlockOutOfRange,
+		},
+		{
+			name: "eth_getCode too far behind head",
+			args: args{
+				rctx:        RewriteContext{latest: hexutil.Uint64(100), maxBlocksBack: 30},
+				req:         &RPCReq{Method: "eth_getCode", Params: mustMarshalJSON([]string{"0x123", hexutil.Uint64(50).String()})},
+				res:         nil,
+				skipeip1898: false,
+			},
+			expected:    RewriteOverrideError,
+			expectedErr: ErrRewriteBlockTooOld,
+		},
+		{
+			name: "eth_getCode within blocks back",
+			args: args{
+				rctx:        RewriteContext{latest: hexutil.Uint64(100), maxBlocksBack: 30},
+				req:         &RPCReq{Method: "eth_getCode", Params: mustMarshalJSON([]string{"0x123", hexutil.Uint64(80).String()})},
+				res:         nil,
+				skipeip1898: false,
+			},
+			expected: RewriteNone,
+		},
+		{
+			name: "eth_getCode earliest too far behind head",
+			args: args{
+				rctx:        RewriteContext{latest: hexutil.Uint64(100), maxBlocksBack: 30},
+				req:         &RPCReq{Method: "eth_getCode", Params: mustMarshalJSON([]string{"0x123", "earliest"})},
+				res:         nil,
+				skipeip1898: false,
+			},
+			expected:    RewriteOverrideError,
+			expectedErr: ErrRewriteBlockTooOld,
 		},
 		/* default block parameter, at position 2 */
 		{
@@ -656,6 +710,22 @@ func TestRewriteRequest(t *testing.T) {
 			},
 			expected:    RewriteOverrideError,
 			expectedErr: ErrRewriteBlockOutOfRange,
+		},
+		{
+			name: "eth_getStorageAt using rpc.BlockNumberOrHash too far behind head",
+			args: args{
+				rctx: RewriteContext{latest: hexutil.Uint64(100), maxBlocksBack: 30},
+				req: &RPCReq{Method: "eth_getStorageAt", Params: mustMarshalJSON([]interface{}{
+					"0xae851f927ee40de99aabb7461c00f9622ab91d60",
+					"10",
+					map[string]interface{}{
+						"blockNumber": hexutil.Uint64(50).String(),
+					}})},
+				res:         nil,
+				skipeip1898: false,
+			},
+			expected:    RewriteOverrideError,
+			expectedErr: ErrRewriteBlockTooOld,
 		},
 		// eip1898 disabled
 		{

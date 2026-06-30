@@ -14,6 +14,7 @@ type RewriteContext struct {
 	safe          hexutil.Uint64
 	finalized     hexutil.Uint64
 	maxBlockRange uint64
+	maxBlocksBack uint64
 }
 
 type RewriteResult uint8
@@ -35,7 +36,18 @@ const (
 var (
 	ErrRewriteBlockOutOfRange = errors.New("block is out of range")
 	ErrRewriteRangeTooLarge   = errors.New("block range is too large")
+	ErrRewriteBlockTooOld     = errors.New("block is too far behind head")
 )
+
+// blockTooOld reports whether the requested block is further behind the latest
+// block than maxBlocksBack allows. A zero maxBlocksBack disables the check.
+func blockTooOld(rctx RewriteContext, block uint64) bool {
+	if rctx.maxBlocksBack == 0 {
+		return false
+	}
+	latest := uint64(rctx.latest)
+	return latest > block && latest-block > rctx.maxBlocksBack
+}
 
 // RewriteTags modifies the request and the response based on block tags
 func RewriteTags(rctx RewriteContext, req *RPCReq, res *RPCRes, skipEIP1898 bool) (RewriteResult, error) {
@@ -188,6 +200,13 @@ func shouldReturnNullOnOutOfRange(method string) bool {
 }
 
 func rewriteRange(rctx RewriteContext, req *RPCReq, res *RPCRes, pos int) (RewriteResult, error) {
+	// eth_getLogs/eth_newFilter cost scales with block-range width, not with how far
+	// behind head the range sits (receipts are age-independent reads), so the
+	// consensus_max_blocks_back "too far behind head" guard does not apply here. Old
+	// ranges are sent to archive backends by the archive-routing layer instead. The
+	// range-width cap (maxBlockRange) and future-block check below still apply.
+	rctx.maxBlocksBack = 0
+
 	var p []map[string]interface{}
 	err := json.Unmarshal(req.Params, &p)
 	if err != nil {
@@ -304,8 +323,12 @@ func rewriteTag(rctx RewriteContext, current string) (string, bool, error) {
 	}
 
 	switch *bnh.BlockNumber {
-	case rpc.PendingBlockNumber,
-		rpc.EarliestBlockNumber:
+	case rpc.PendingBlockNumber:
+		return current, false, nil
+	case rpc.EarliestBlockNumber:
+		if blockTooOld(rctx, 0) {
+			return "", false, ErrRewriteBlockTooOld
+		}
 		return current, false, nil
 	case rpc.FinalizedBlockNumber:
 		return rctx.finalized.String(), true, nil
@@ -316,6 +339,9 @@ func rewriteTag(rctx RewriteContext, current string) (string, bool, error) {
 	default:
 		if bnh.BlockNumber.Int64() > int64(rctx.latest) {
 			return "", false, ErrRewriteBlockOutOfRange
+		}
+		if blockTooOld(rctx, uint64(bnh.BlockNumber.Int64())) {
+			return "", false, ErrRewriteBlockTooOld
 		}
 	}
 
@@ -329,8 +355,12 @@ func rewriteTagBlockNumberOrHash(rctx RewriteContext, current *rpc.BlockNumberOr
 	}
 
 	switch *current.BlockNumber {
-	case rpc.PendingBlockNumber,
-		rpc.EarliestBlockNumber:
+	case rpc.PendingBlockNumber:
+		return current, false, nil
+	case rpc.EarliestBlockNumber:
+		if blockTooOld(rctx, 0) {
+			return nil, false, ErrRewriteBlockTooOld
+		}
 		return current, false, nil
 	case rpc.FinalizedBlockNumber:
 		bn := rpc.BlockNumberOrHashWithNumber(rpc.BlockNumber(rctx.finalized))
@@ -344,6 +374,9 @@ func rewriteTagBlockNumberOrHash(rctx RewriteContext, current *rpc.BlockNumberOr
 	default:
 		if current.BlockNumber.Int64() > int64(rctx.latest) {
 			return nil, false, ErrRewriteBlockOutOfRange
+		}
+		if blockTooOld(rctx, uint64(current.BlockNumber.Int64())) {
+			return nil, false, ErrRewriteBlockTooOld
 		}
 	}
 

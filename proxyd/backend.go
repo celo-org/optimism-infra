@@ -135,6 +135,11 @@ var (
 		Message:       "address is sanctioned",
 		HTTPErrorCode: 403,
 	}
+	ErrArchiveBackendUnavailable = &RPCErr{
+		Code:          JSONRPCErrorInternal - 22,
+		Message:       "no archive backend available to serve historical eth_getLogs range",
+		HTTPErrorCode: 503,
+	}
 
 	ErrBackendUnexpectedJSONRPC = errors.New("backend returned an unexpected JSON-RPC response")
 
@@ -802,6 +807,18 @@ func (bg *BackendGroup) GetRoutingStrategy() RoutingStrategy {
 	return bg.routingStrategy
 }
 
+// hasArchiveBackend reports whether the group is configured with at least one archive
+// backend (regardless of current health). Used to tell a transient archive outage apart
+// from a deployment that simply runs no archive backends.
+func (bg *BackendGroup) hasArchiveBackend() bool {
+	for _, b := range bg.Backends {
+		if b.archive {
+			return true
+		}
+	}
+	return false
+}
+
 func (bg *BackendGroup) Fallbacks() []*Backend {
 	fallbacks := []*Backend{}
 	for _, a := range bg.Backends {
@@ -850,11 +867,23 @@ func (bg *BackendGroup) Forward(ctx context.Context, rpcReqs []*RPCReq, isBatch 
 
 	// Determine if archive is required
 	archiveRequired := false
+	getLogsArchiveRequired := false
 	for _, req := range rpcReqs {
 		// All debug_* methods require archive nodes
 		if strings.HasPrefix(req.Method, "debug_") {
 			archiveRequired = true
 			break
+		}
+
+		// eth_getLogs carries its block bounds in a filter object (fromBlock/toBlock),
+		// not a positional param, so it can't use blockParamIndex. Route to archive when
+		// its oldest bound is beyond the archive threshold, or when it pins a blockHash.
+		if req.Method == "eth_getLogs" {
+			if bg.Consensus != nil && getLogsRequiresArchive(req, bg.Consensus.GetLatestBlockNumber(), bg.ArchiveBlockThreshold) {
+				archiveRequired = true
+				getLogsArchiveRequired = true
+			}
+			continue
 		}
 
 		idx, ok := blockParamIndex[req.Method]
@@ -898,6 +927,11 @@ func (bg *BackendGroup) Forward(ctx context.Context, rpcReqs []*RPCReq, isBatch 
 		}
 		if len(archiveBackends) > 0 {
 			backends = archiveBackends
+		} else if getLogsArchiveRequired && bg.hasArchiveBackend() {
+			// The group runs archive backends but none are currently healthy. Serving an
+			// old eth_getLogs range from a full node would return a silent empty result for
+			// pruned blocks, so fail loudly instead of best-effort routing to a full node.
+			return nil, "", ErrArchiveBackendUnavailable
 		}
 		rpcArchiveRequestsTotal.Inc()
 	} else if bg.RestrictArchiveNodeTraffic {
@@ -1794,6 +1828,7 @@ func (bg *BackendGroup) OverwriteConsensusResponses(rpcReqs []*RPCReq, overridde
 		safe:          bg.Consensus.GetSafeBlockNumber(),
 		finalized:     bg.Consensus.GetFinalizedBlockNumber(),
 		maxBlockRange: bg.Consensus.maxBlockRange,
+		maxBlocksBack: bg.Consensus.maxBlocksBack,
 	}
 
 	for i, req := range rpcReqs {
@@ -1811,6 +1846,10 @@ func (bg *BackendGroup) OverwriteConsensusResponses(rpcReqs []*RPCReq, overridde
 			} else if errors.Is(err, ErrRewriteRangeTooLarge) {
 				res.Error = ErrInvalidParams(
 					fmt.Sprintf("block range greater than %d max", rctx.maxBlockRange),
+				)
+			} else if errors.Is(err, ErrRewriteBlockTooOld) {
+				res.Error = ErrInvalidParams(
+					fmt.Sprintf("block is more than %d blocks behind head", rctx.maxBlocksBack),
 				)
 			} else {
 				res.Error = ErrParseErr
@@ -1872,6 +1911,28 @@ func requiresArchiveForBlock(blockParam string, latestBlockNumber hexutil.Uint64
 		}
 	}
 	return false
+}
+
+// getLogsRequiresArchive reports whether an eth_getLogs request must be served by an
+// archive backend: either it pins a blockHash (not bounded by number) or its oldest
+// bound (fromBlock) is far enough behind head to require archive data. fromBlock/toBlock
+// tags are already resolved to block numbers by the request rewriter at this point.
+func getLogsRequiresArchive(req *RPCReq, latestBlockNumber hexutil.Uint64, archiveBlockThreshold uint64) bool {
+	var params []map[string]interface{}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		// Fail safe: if the bounds can't be parsed, route to archive rather than risk
+		// serving an old (pruned) range from a full node that returns a silent empty set.
+		return true
+	}
+	if len(params) == 0 {
+		return false
+	}
+	filter := params[0]
+	if _, ok := filter["blockHash"]; ok {
+		return true
+	}
+	// fromBlock is the oldest bound; if it requires archive, the whole query does.
+	return requiresArchiveForBlock(extractBlockParameter(filter["fromBlock"]), latestBlockNumber, archiveBlockThreshold)
 }
 
 // receiptMethods maps RPC methods that return receipt arrays.

@@ -39,6 +39,7 @@ type ConsensusPoller struct {
 	maxUpdateThreshold time.Duration
 	maxBlockLag        uint64
 	maxBlockRange      uint64
+	maxBlocksBack      uint64
 	interval           time.Duration
 }
 
@@ -251,6 +252,12 @@ func WithMaxBlockLag(maxBlockLag uint64) ConsensusOpt {
 func WithMaxBlockRange(maxBlockRange uint64) ConsensusOpt {
 	return func(cp *ConsensusPoller) {
 		cp.maxBlockRange = maxBlockRange
+	}
+}
+
+func WithMaxBlocksBack(maxBlocksBack uint64) ConsensusOpt {
+	return func(cp *ConsensusPoller) {
+		cp.maxBlocksBack = maxBlocksBack
 	}
 }
 
