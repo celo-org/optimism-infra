@@ -200,6 +200,13 @@ func shouldReturnNullOnOutOfRange(method string) bool {
 }
 
 func rewriteRange(rctx RewriteContext, req *RPCReq, res *RPCRes, pos int) (RewriteResult, error) {
+	// eth_getLogs/eth_newFilter cost scales with block-range width, not with how far
+	// behind head the range sits (receipts are age-independent reads), so the
+	// consensus_max_blocks_back "too far behind head" guard does not apply here. Old
+	// ranges are sent to archive backends by the archive-routing layer instead. The
+	// range-width cap (maxBlockRange) and future-block check below still apply.
+	rctx.maxBlocksBack = 0
+
 	var p []map[string]interface{}
 	err := json.Unmarshal(req.Params, &p)
 	if err != nil {

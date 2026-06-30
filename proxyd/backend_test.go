@@ -263,6 +263,103 @@ func TestRequiresArchiveForBlock(t *testing.T) {
 	}
 }
 
+func TestGetLogsRequiresArchive(t *testing.T) {
+	latest := hexutil.Uint64(1000)
+
+	tests := []struct {
+		name      string
+		filter    map[string]interface{}
+		latest    hexutil.Uint64
+		threshold uint64
+		expected  bool
+	}{
+		{
+			name:     "no block bounds (defaults to latest)",
+			filter:   map[string]interface{}{"address": "0x123"},
+			latest:   latest,
+			expected: false,
+		},
+		{
+			name:     "recent fromBlock",
+			filter:   map[string]interface{}{"fromBlock": "0x3e0"}, // 992, 8 behind head
+			latest:   latest,
+			expected: false,
+		},
+		{
+			name:     "old fromBlock",
+			filter:   map[string]interface{}{"fromBlock": "0x100"}, // 256, 744 behind head
+			latest:   latest,
+			expected: true,
+		},
+		{
+			name:     "earliest fromBlock",
+			filter:   map[string]interface{}{"fromBlock": "earliest"},
+			latest:   latest,
+			expected: true,
+		},
+		{
+			name:     "latest fromBlock",
+			filter:   map[string]interface{}{"fromBlock": "latest"},
+			latest:   latest,
+			expected: false,
+		},
+		{
+			name:     "blockHash pins archive",
+			filter:   map[string]interface{}{"blockHash": "0xabcdef"},
+			latest:   latest,
+			expected: true,
+		},
+		{
+			// oldest bound governs: old fromBlock requires archive even with a recent toBlock.
+			name:     "old fromBlock with recent toBlock",
+			filter:   map[string]interface{}{"fromBlock": "0x100", "toBlock": "0x3e0"},
+			latest:   latest,
+			expected: true,
+		},
+		{
+			name:      "custom threshold: old fromBlock",
+			filter:    map[string]interface{}{"fromBlock": "0x1f4"}, // 500, 500 behind head
+			latest:    latest,
+			threshold: 500,
+			expected:  true,
+		},
+		{
+			name:      "custom threshold: recent fromBlock",
+			filter:    map[string]interface{}{"fromBlock": "0x3e0"}, // 992
+			latest:    latest,
+			threshold: 500,
+			expected:  false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req := &RPCReq{
+				Method: "eth_getLogs",
+				Params: mustMarshalJSON([]map[string]interface{}{test.filter}),
+			}
+			result := getLogsRequiresArchive(req, test.latest, test.threshold)
+			assert.Equal(t, test.expected, result)
+		})
+	}
+
+	t.Run("empty params", func(t *testing.T) {
+		req := &RPCReq{Method: "eth_getLogs", Params: mustMarshalJSON([]map[string]interface{}{})}
+		assert.False(t, getLogsRequiresArchive(req, latest, 0))
+	})
+
+	t.Run("unparseable params fail safe to archive", func(t *testing.T) {
+		req := &RPCReq{Method: "eth_getLogs", Params: json.RawMessage(`{"not":"an array"}`)}
+		assert.True(t, getLogsRequiresArchive(req, latest, 0))
+	})
+}
+
+func TestHasArchiveBackend(t *testing.T) {
+	assert.False(t, (&BackendGroup{}).hasArchiveBackend())
+	assert.False(t, (&BackendGroup{Backends: []*Backend{{archive: false}}}).hasArchiveBackend())
+	assert.True(t, (&BackendGroup{Backends: []*Backend{{archive: false}, {archive: true}}}).hasArchiveBackend())
+}
+
 func TestContainsArchiveRequiredError(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -100,21 +100,27 @@ backends = ["infura"]
 # consensus_max_block_lag = 16
 # Maximum block range (for eth_getLogs method), no default
 # consensus_max_block_range = 20000
-# Maximum number of blocks behind head a block-addressed read may target, no default.
-# When set, requests whose block parameter is more than this many blocks behind the
-# latest block are rejected (applies to eth_call, eth_getBalance, eth_getCode,
-# eth_getTransactionCount, eth_getStorageAt, eth_getProof, and eth_getLogs from/toBlock).
+# Maximum number of blocks behind head a block-addressed STATE read may target, no default.
+# When set, requests whose block parameter is more than this many blocks behind the latest
+# block are rejected (applies to eth_call, eth_getBalance, eth_getCode,
+# eth_getTransactionCount, eth_getStorageAt, and eth_getProof). eth_getLogs is exempt: its
+# cost is bounded by block-range width (consensus_max_block_range), not depth, and old
+# ranges are routed to archive backends instead of being rejected.
 # consensus_max_blocks_back = 100000
 # Minimum peer count, default 3
 # consensus_min_peer_count = 4
 # Restrict archive node traffic to only archive-required requests, default false
 # When enabled, archive backends (archive=true) will only receive traffic for:
-# - Requests that explicitly require archive data (old blocks, blockHash queries)
+# - Requests that explicitly require archive data (old blocks, blockHash queries, and
+#   eth_getLogs whose range starts before archive_block_threshold)
 # - Regular requests when no non-archive backends are available (fallback)
 # restrict_archive_node_traffic = true
 # Number of blocks from head beyond which requests are routed to archive backends.
 # Default: 128 (standard full-node state window)
 # archive_block_threshold = 1000000
+# Note: if the group has archive backends configured but none are currently healthy, an
+# eth_getLogs whose range requires archive fails with an explicit error (HTTP 503) rather
+# than being served from a full node, which would silently return [] for pruned blocks.
 
 [backend_groups.alchemy]
 backends = ["alchemy"]

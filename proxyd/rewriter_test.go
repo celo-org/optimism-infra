@@ -221,6 +221,28 @@ func TestRewriteRequest(t *testing.T) {
 				require.Equal(t, hexutil.Uint64(100).String(), p[0]["toBlock"])
 			},
 		},
+		{
+			// state reads at this depth are rejected (see "eth_getCode too far behind
+			// head"), but getLogs is range-axis, not depth-axis, so it must be allowed.
+			name: "eth_getLogs fromBlock far behind head is not depth-limited",
+			args: args{
+				rctx:        RewriteContext{latest: hexutil.Uint64(100), maxBlocksBack: 30},
+				req:         &RPCReq{Method: "eth_getLogs", Params: mustMarshalJSON([]map[string]interface{}{{"fromBlock": hexutil.Uint64(50).String(), "toBlock": hexutil.Uint64(60).String()}})},
+				res:         nil,
+				skipeip1898: false,
+			},
+			expected: RewriteNone,
+		},
+		{
+			name: "eth_getLogs earliest is not depth-limited",
+			args: args{
+				rctx:        RewriteContext{latest: hexutil.Uint64(100), maxBlocksBack: 30},
+				req:         &RPCReq{Method: "eth_getLogs", Params: mustMarshalJSON([]map[string]interface{}{{"fromBlock": "earliest", "toBlock": hexutil.Uint64(60).String()}})},
+				res:         nil,
+				skipeip1898: false,
+			},
+			expected: RewriteNone,
+		},
 		/* required parameter at pos 0 */
 		{
 			name: "debug_getRawReceipts latest",
