@@ -12,6 +12,7 @@ import (
 
 const (
 	notWhitelistedResponse        = `{"jsonrpc":"2.0","error":{"code":-32601,"message":"rpc method is not whitelisted custom message"},"id":999}`
+	ethSendTransactionResponse    = `{"jsonrpc":"2.0","error":{"code":-32601,"message":"eth_sendTransaction is not supported; sign the transaction and submit it with eth_sendRawTransaction"},"id":999}`
 	parseErrResponse              = `{"jsonrpc":"2.0","error":{"code":-32700,"message":"parse error"},"id":null}`
 	invalidJSONRPCVersionResponse = `{"error":{"code":-32600,"message":"invalid JSON-RPC version"},"id":null,"jsonrpc":"2.0"}`
 	invalidIDResponse             = `{"error":{"code":-32600,"message":"invalid ID"},"id":null,"jsonrpc":"2.0"}`
@@ -89,6 +90,14 @@ func TestSingleRPCValidation(t *testing.T) {
 			"not whitelisted method",
 			"{\"jsonrpc\": \"2.0\", \"method\": \"subtract\", \"params\": [42, 23], \"id\": 999}",
 			notWhitelistedResponse,
+			403,
+		},
+		{
+			// eth_sendTransaction gets its own actionable message, not the generic
+			// (here custom-configured) not-whitelisted one.
+			"eth_sendTransaction unsupported message",
+			"{\"jsonrpc\": \"2.0\", \"method\": \"eth_sendTransaction\", \"params\": [], \"id\": 999}",
+			ethSendTransactionResponse,
 			403,
 		},
 	}

@@ -360,6 +360,14 @@ func TestHasArchiveBackend(t *testing.T) {
 	assert.True(t, (&BackendGroup{Backends: []*Backend{{archive: false}, {archive: true}}}).hasArchiveBackend())
 }
 
+func TestUnsupportedMethodError(t *testing.T) {
+	// eth_sendTransaction gets the dedicated, actionable message.
+	assert.Equal(t, ErrEthSendTransactionUnsupported, unsupportedMethodError("eth_sendTransaction"))
+	// Everything else falls back to the standard not-whitelisted error.
+	assert.Equal(t, ErrMethodNotWhitelisted, unsupportedMethodError("eth_sendRawTransaction"))
+	assert.Equal(t, ErrMethodNotWhitelisted, unsupportedMethodError("foo_bar"))
+}
+
 func TestContainsArchiveRequiredError(t *testing.T) {
 	tests := []struct {
 		name     string

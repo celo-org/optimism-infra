@@ -603,8 +603,9 @@ func (s *Server) handleBatchRPC(ctx context.Context, reqs []json.RawMessage, isL
 				"req_id", GetReqID(ctx),
 				"method", parsedReq.Method,
 			)
-			RecordRPCError(ctx, BackendProxyd, MethodUnknown, ErrMethodNotWhitelisted)
-			responses[i] = NewRPCErrorRes(parsedReq.ID, ErrMethodNotWhitelisted)
+			rpcErr := unsupportedMethodError(parsedReq.Method)
+			RecordRPCError(ctx, BackendProxyd, MethodUnknown, rpcErr)
+			responses[i] = NewRPCErrorRes(parsedReq.ID, rpcErr)
 			continue
 		}
 
