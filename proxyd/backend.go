@@ -68,6 +68,11 @@ var (
 		Message:       "rpc method is not whitelisted",
 		HTTPErrorCode: 403,
 	}
+	ErrEthSendTransactionUnsupported = &RPCErr{
+		Code:          notFoundRpcError,
+		Message:       "eth_sendTransaction is not supported; sign the transaction and submit it with eth_sendRawTransaction",
+		HTTPErrorCode: 403,
+	}
 	ErrBackendOffline = &RPCErr{
 		Code:          JSONRPCErrorInternal - 10,
 		Message:       "backend offline",
@@ -161,6 +166,18 @@ func ErrInvalidParams(msg string) *RPCErr {
 		Message:       msg,
 		HTTPErrorCode: 400,
 	}
+}
+
+// unsupportedMethodError returns the error to send for a method proxyd will not forward.
+// eth_sendTransaction gets a dedicated, actionable message: it asks the node to hold the
+// account key and sign the transaction, which a public endpoint does not do, so the fix
+// is to sign client-side and use eth_sendRawTransaction. Every other non-whitelisted
+// method gets the standard (operator-customizable) not-whitelisted error.
+func unsupportedMethodError(method string) *RPCErr {
+	if method == "eth_sendTransaction" {
+		return ErrEthSendTransactionUnsupported
+	}
+	return ErrMethodNotWhitelisted
 }
 
 type Backend struct {
@@ -1447,7 +1464,7 @@ func (w *WSProxier) prepareClientMsg(msg []byte) (*RPCReq, error) {
 	}
 
 	if !w.methodWhitelist.Has(req.Method) {
-		return req, ErrMethodNotWhitelisted
+		return req, unsupportedMethodError(req.Method)
 	}
 
 	return req, nil
