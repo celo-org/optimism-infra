@@ -50,7 +50,22 @@ var (
 		"eth_getProof":            2,
 		"eth_getBlockReceipts":    0,
 	}
+
+	// debugMethodsNotRequiringArchive lists debug_* methods that a full node can serve at
+	// any depth, exempting them from the blanket debug_* archive rule. The rest of the
+	// namespace reads historical state (debug_trace*, debug_storageRangeAt) or receipts
+	// (debug_getRawReceipts), which full nodes prune; headers are never pruned, so
+	// debug_getRawHeader has no such dependency regardless of how old the block is.
+	debugMethodsNotRequiringArchive = map[string]bool{
+		"debug_getRawHeader": true,
+	}
 )
+
+// debugMethodRequiresArchive reports whether a debug_* method must be served by an archive
+// backend. Non-debug methods always return false; they are classified by block parameter.
+func debugMethodRequiresArchive(method string) bool {
+	return strings.HasPrefix(method, "debug_") && !debugMethodsNotRequiringArchive[method]
+}
 
 var (
 	ErrParseErr = &RPCErr{
@@ -886,8 +901,8 @@ func (bg *BackendGroup) Forward(ctx context.Context, rpcReqs []*RPCReq, isBatch 
 	archiveRequired := false
 	getLogsArchiveRequired := false
 	for _, req := range rpcReqs {
-		// All debug_* methods require archive nodes
-		if strings.HasPrefix(req.Method, "debug_") {
+		// debug_* methods require archive nodes, except those reading never-pruned data.
+		if debugMethodRequiresArchive(req.Method) {
 			archiveRequired = true
 			break
 		}

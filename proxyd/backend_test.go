@@ -102,6 +102,32 @@ func TestExtractBlockParameter(t *testing.T) {
 	}
 }
 
+func TestDebugMethodRequiresArchive(t *testing.T) {
+	tests := []struct {
+		method   string
+		expected bool
+	}{
+		// Never pruned, so servable by a full node at any depth.
+		{"debug_getRawHeader", false},
+		// Depend on historical state or receipts, which full nodes prune.
+		{"debug_getRawReceipts", true},
+		{"debug_traceTransaction", true},
+		{"debug_traceBlockByNumber", true},
+		{"debug_storageRangeAt", true},
+		// Unknown debug_* methods stay archive-only: the blanket rule is the safe default.
+		{"debug_someFutureMethod", true},
+		// Non-debug methods are classified by block parameter, not by this predicate.
+		{"eth_getProof", false},
+		{"eth_getBlockByNumber", false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.method, func(t *testing.T) {
+			assert.Equal(t, test.expected, debugMethodRequiresArchive(test.method))
+		})
+	}
+}
+
 func TestRequiresArchiveForBlock(t *testing.T) {
 	latestBlock := hexutil.Uint64(1000)
 
