@@ -50,21 +50,47 @@ var (
 		"eth_getProof":            2,
 		"eth_getBlockReceipts":    0,
 	}
-
-	// debugMethodsNotRequiringArchive lists debug_* methods that a full node can serve at
-	// any depth, exempting them from the blanket debug_* archive rule. The rest of the
-	// namespace reads historical state (debug_trace*, debug_storageRangeAt) or receipts
-	// (debug_getRawReceipts), which full nodes prune; headers are never pruned, so
-	// debug_getRawHeader has no such dependency regardless of how old the block is.
-	debugMethodsNotRequiringArchive = map[string]bool{
-		"debug_getRawHeader": true,
-	}
 )
 
+// blockHashHexLen is the length of a 0x-prefixed 32-byte block hash. Block numbers and
+// tags are always shorter, so length distinguishes a hash selector from a number or tag.
+const blockHashHexLen = 66
+
 // debugMethodRequiresArchive reports whether a debug_* method must be served by an archive
-// backend. Non-debug methods always return false; they are classified by block parameter.
-func debugMethodRequiresArchive(method string) bool {
-	return strings.HasPrefix(method, "debug_") && !debugMethodsNotRequiringArchive[method]
+// backend. Most of the namespace reads historical state (debug_trace*, debug_storageRangeAt)
+// or receipts (debug_getRawReceipts), which full nodes prune, so it defaults to true.
+// Returns false for non-debug methods; those are classified by block parameter instead.
+func debugMethodRequiresArchive(req *RPCReq) bool {
+	if !strings.HasPrefix(req.Method, "debug_") {
+		return false
+	}
+	// Headers are never pruned, so debug_getRawHeader carries no historical-state or
+	// receipt dependency. But it takes a BlockNumberOrHash, and geth-style backends
+	// resolve non-hash selectors via BlockByNumberOrHash, which reads the block body --
+	// data a snap-synced or partial-history full node may not have. Only hash selectors
+	// skip that lookup and read the header directly, so only they are safe to exempt.
+	if req.Method == "debug_getRawHeader" {
+		return !selectsBlockByHash(req)
+	}
+	return true
+}
+
+// selectsBlockByHash reports whether the request's first parameter selects a block by hash,
+// either as a bare hash string or as a {"blockHash": ...} object. Unparseable params fail
+// safe to false, keeping the request archive-routed.
+func selectsBlockByHash(req *RPCReq) bool {
+	var params []interface{}
+	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) == 0 {
+		return false
+	}
+	switch param := params[0].(type) {
+	case string:
+		return len(param) == blockHashHexLen && strings.HasPrefix(param, "0x")
+	case map[string]interface{}:
+		_, ok := param["blockHash"]
+		return ok
+	}
+	return false
 }
 
 var (
@@ -902,7 +928,7 @@ func (bg *BackendGroup) Forward(ctx context.Context, rpcReqs []*RPCReq, isBatch 
 	getLogsArchiveRequired := false
 	for _, req := range rpcReqs {
 		// debug_* methods require archive nodes, except those reading never-pruned data.
-		if debugMethodRequiresArchive(req.Method) {
+		if debugMethodRequiresArchive(req) {
 			archiveRequired = true
 			break
 		}
