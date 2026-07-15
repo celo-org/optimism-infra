@@ -102,6 +102,45 @@ func TestExtractBlockParameter(t *testing.T) {
 	}
 }
 
+func TestDebugMethodRequiresArchive(t *testing.T) {
+	const hash = "0x66c45eea1559e2f854b13c8e517756e61ca7ed2963db0af0bc976f855455e07c"
+
+	tests := []struct {
+		name     string
+		method   string
+		params   string
+		expected bool
+	}{
+		// Hash selectors read the header directly, so any full node can serve them.
+		{"getRawHeader by hash", "debug_getRawHeader", `["` + hash + `"]`, false},
+		{"getRawHeader by blockHash object", "debug_getRawHeader", `[{"blockHash":"` + hash + `"}]`, false},
+		// Non-hash selectors resolve via the block body, which a partial-history node
+		// may lack, so they stay archive-routed.
+		{"getRawHeader by number", "debug_getRawHeader", `["0x100000"]`, true},
+		{"getRawHeader by latest tag", "debug_getRawHeader", `["latest"]`, true},
+		{"getRawHeader by blockNumber object", "debug_getRawHeader", `[{"blockNumber":"0x100000"}]`, true},
+		{"getRawHeader with no params fails safe", "debug_getRawHeader", `[]`, true},
+		{"getRawHeader with bad params fails safe", "debug_getRawHeader", `"not-an-array"`, true},
+		// Depend on historical state or receipts, which full nodes prune.
+		{"getRawReceipts", "debug_getRawReceipts", `["` + hash + `"]`, true},
+		{"traceTransaction", "debug_traceTransaction", `["` + hash + `"]`, true},
+		{"traceBlockByNumber", "debug_traceBlockByNumber", `["0x100000"]`, true},
+		{"storageRangeAt", "debug_storageRangeAt", `["0x100000"]`, true},
+		// Unknown debug_* methods stay archive-only: the blanket rule is the safe default.
+		{"unknown debug method", "debug_someFutureMethod", `["` + hash + `"]`, true},
+		// Non-debug methods are classified by block parameter, not by this predicate.
+		{"eth_getProof", "eth_getProof", `["0x0",[],"0x100000"]`, false},
+		{"eth_getBlockByNumber", "eth_getBlockByNumber", `["0x100000",false]`, false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req := &RPCReq{Method: test.method, Params: json.RawMessage(test.params)}
+			assert.Equal(t, test.expected, debugMethodRequiresArchive(req))
+		})
+	}
+}
+
 func TestRequiresArchiveForBlock(t *testing.T) {
 	latestBlock := hexutil.Uint64(1000)
 
