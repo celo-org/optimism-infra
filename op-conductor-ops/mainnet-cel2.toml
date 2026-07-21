@@ -8,7 +8,7 @@
 sequencers = [
     "0",
     "1",
-    "2",
+    "reth-0",
 ]
 
 # Sequencer configurations
@@ -26,8 +26,8 @@ conductor_rpc_url = "http://op-conductor-rpc-1:8545"
 node_rpc_url = "http://op-node-sequencer-rpc-1:9545"
 voting = true
 
-[sequencers.2]
-raft_addr = "op-conductor-consensus-2:50050"
-conductor_rpc_url = "http://op-conductor-rpc-2:8545"
-node_rpc_url = "http://op-node-sequencer-rpc-2:9545"
+[sequencers.reth-0]
+raft_addr = "op-conductor-reth-consensus-0:50050"
+conductor_rpc_url = "http://op-conductor-reth-rpc-0:8545"
+node_rpc_url = "http://op-node-reth-sequencer-rpc-0:9545"
 voting = true
