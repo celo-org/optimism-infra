@@ -92,6 +92,12 @@ consensus_receipts_target = "alchemy_getTransactionReceipts"
 backends = ["infura"]
 # Enable consensus awareness for backend group, making it act as a load balancer, default false
 # consensus_aware = true
+# Broadcast eth_sendRawTransaction to every backend in the group (like routing_strategy =
+# "multicall") while all other methods keep following the group's routing strategy. Useful for
+# HA sequencer setups where any backend can be the active block builder and there is no reliable
+# way to route the tx to the current leader; broadcasting guarantees the builder has the tx in
+# its own mempool instead of relying on p2p gossip. Default false.
+# multicall_send_raw_transaction = true
 # Period in which the backend wont serve requests if banned, default 5m
 # consensus_ban_period = "1m"
 # Maximum delay for update the backend, default 30s

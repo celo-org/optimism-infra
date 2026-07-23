@@ -1,0 +1,30 @@
+[server]
+rpc_port = 8549
+enable_served_by_header = true
+timeout_seconds = 7
+
+[backend]
+response_timeout_seconds = 4
+max_degraded_latency_threshold = "30ms"
+
+[backends]
+[backends.node1]
+rpc_url = "$NODE1_URL"
+
+[backends.node2]
+rpc_url = "$NODE2_URL"
+
+[backends.node3]
+rpc_url = "$NODE3_URL"
+
+[backend_groups]
+[backend_groups.node]
+backends = ["node1", "node2", "node3"]
+# Reads follow the group's routing strategy (a single backend), but
+# eth_sendRawTransaction is broadcast to every backend.
+routing_strategy = "fallback"
+multicall_send_raw_transaction = true
+
+[rpc_method_mappings]
+eth_call = "node"
+eth_sendRawTransaction = "node"

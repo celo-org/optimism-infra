@@ -850,19 +850,24 @@ func sortBatchRPCResponse(req []*RPCReq, res []*RPCRes) {
 }
 
 type BackendGroup struct {
-	Name                       string
-	Backends                   []*Backend
-	WeightedRouting            bool
-	SkipEIP1898                bool
-	Consensus                  *ConsensusPoller
-	FallbackBackends           map[string]bool
-	routingStrategy            RoutingStrategy
-	RestrictArchiveNodeTraffic bool
-	ArchiveBlockThreshold      uint64
+	Name                        string
+	Backends                    []*Backend
+	WeightedRouting             bool
+	SkipEIP1898                 bool
+	Consensus                   *ConsensusPoller
+	FallbackBackends            map[string]bool
+	routingStrategy             RoutingStrategy
+	multicallSendRawTransaction bool
+	RestrictArchiveNodeTraffic  bool
+	ArchiveBlockThreshold       uint64
 }
 
 func (bg *BackendGroup) GetRoutingStrategy() RoutingStrategy {
 	return bg.routingStrategy
+}
+
+func (bg *BackendGroup) MulticallSendRawTransaction() bool {
+	return bg.multicallSendRawTransaction
 }
 
 // hasArchiveBackend reports whether the group is configured with at least one archive
@@ -918,7 +923,7 @@ func (bg *BackendGroup) Forward(ctx context.Context, rpcReqs []*RPCReq, isBatch 
 
 	// When routing_strategy is set to 'multicall' the request will be forward to all backends
 	// and return the first successful response
-	if bg.GetRoutingStrategy() == MulticallRoutingStrategy && isValidMulticallTx(rpcReqs) && !isBatch {
+	if (bg.GetRoutingStrategy() == MulticallRoutingStrategy || bg.multicallSendRawTransaction) && isValidMulticallTx(rpcReqs) && !isBatch {
 		backendResp := bg.ExecuteMulticall(ctx, rpcReqs)
 		return backendResp.RPCRes, backendResp.ServedBy, backendResp.error
 	}

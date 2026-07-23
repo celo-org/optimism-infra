@@ -167,6 +167,14 @@ type BackendGroupConfig struct {
 
 	RoutingStrategy RoutingStrategy `toml:"routing_strategy"`
 
+	// MulticallSendRawTransaction broadcasts eth_sendRawTransaction to every backend in
+	// the group (like the "multicall" routing strategy) while leaving all other methods to
+	// the configured routing_strategy. Intended for HA sequencer setups where any backend
+	// can be the active block builder and there is no reliable way to route the tx to the
+	// current leader; broadcasting guarantees the builder has the tx in its own mempool
+	// instead of relying on p2p gossip to deliver it.
+	MulticallSendRawTransaction bool `toml:"multicall_send_raw_transaction"`
+
 	/*
 		Deprecated: Use routing_strategy config to create a consensus_aware proxyd instance
 	*/

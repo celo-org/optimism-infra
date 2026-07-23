@@ -1,0 +1,96 @@
+package integration_tests
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/ethereum-optimism/infra/proxyd"
+	"github.com/stretchr/testify/require"
+)
+
+// TestMulticallSendRawTransaction verifies the multicall_send_raw_transaction flag:
+// eth_sendRawTransaction is broadcast to every backend in the group, while all other
+// methods keep following the group's routing strategy (here, "fallback", which serves a
+// read from a single backend). This lets an HA sequencer group route reads normally while
+// guaranteeing every candidate block builder receives submitted transactions directly,
+// instead of relying on p2p gossip.
+func TestMulticallSendRawTransaction(t *testing.T) {
+	node1 := NewMockBackend(SingleResponseHandler(200, txAccepted))
+	node2 := NewMockBackend(SingleResponseHandler(200, txAccepted))
+	node3 := NewMockBackend(SingleResponseHandler(200, txAccepted))
+	defer node1.Close()
+	defer node2.Close()
+	defer node3.Close()
+
+	require.NoError(t, os.Setenv("NODE1_URL", node1.URL()))
+	require.NoError(t, os.Setenv("NODE2_URL", node2.URL()))
+	require.NoError(t, os.Setenv("NODE3_URL", node3.URL()))
+
+	config := ReadConfig("multicall_send_raw_tx")
+	svr, shutdown, err := proxyd.Start(config)
+	require.NoError(t, err)
+	defer shutdown()
+
+	bg := svr.BackendGroups["node"]
+	require.NotNil(t, bg)
+	require.Nil(t, bg.Consensus, "consensus should not be initialized for a fallback group")
+	require.Equal(t, proxyd.FallbackRoutingStrategy, bg.GetRoutingStrategy())
+	require.True(t, bg.MulticallSendRawTransaction(), "multicall_send_raw_transaction should be enabled")
+	require.Equal(t, 3, len(bg.Backends))
+
+	sendRPC := func(body []byte) *http.Response {
+		req, _ := http.NewRequest("POST", "https://1.1.1.1:8080", bytes.NewReader(body))
+		req.Header.Set("X-Forwarded-For", "203.0.113.1")
+		rr := httptest.NewRecorder()
+		svr.HandleRPC(rr, req)
+		return rr.Result()
+	}
+	totalRequests := func() int {
+		return len(node1.Requests()) + len(node2.Requests()) + len(node3.Requests())
+	}
+
+	t.Run("broadcasts eth_sendRawTransaction to all backends", func(t *testing.T) {
+		node1.Reset()
+		node2.Reset()
+		node3.Reset()
+
+		resp := sendRPC(makeSendRawTransaction(txHex1))
+		defer resp.Body.Close()
+		require.Equal(t, 200, resp.StatusCode)
+		rpcRes := &proxyd.RPCRes{}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(rpcRes))
+		require.False(t, rpcRes.IsError())
+
+		// Multicall dispatches to every backend concurrently and returns as soon as one
+		// succeeds, so the others may still be in flight when the response is written.
+		require.Eventually(t, func() bool {
+			return len(node1.Requests()) == 1 &&
+				len(node2.Requests()) == 1 &&
+				len(node3.Requests()) == 1
+		}, 5*time.Second, 10*time.Millisecond,
+			"every backend should receive the raw transaction exactly once")
+	})
+
+	t.Run("does not broadcast reads", func(t *testing.T) {
+		node1.Reset()
+		node2.Reset()
+		node3.Reset()
+
+		body := []byte(`{"jsonrpc":"2.0","method":"eth_call","params":[{"to":"0x0000000000000000000000000000000000000000","data":"0x"},"latest"],"id":1}`)
+		resp := sendRPC(body)
+		defer resp.Body.Close()
+		require.Equal(t, 200, resp.StatusCode)
+
+		// A read must follow the fallback routing strategy: exactly one backend, never a
+		// broadcast to all three.
+		require.Eventually(t, func() bool { return totalRequests() == 1 },
+			2*time.Second, 10*time.Millisecond, "a read should hit exactly one backend")
+		require.Never(t, func() bool { return totalRequests() > 1 },
+			500*time.Millisecond, 50*time.Millisecond, "a read must not be broadcast")
+	})
+}

@@ -245,14 +245,15 @@ func Start(config *Config) (*Server, func(), error) {
 		}
 
 		backendGroups[bgName] = &BackendGroup{
-			Name:                       bgName,
-			Backends:                   backends,
-			WeightedRouting:            bg.WeightedRouting,
-			SkipEIP1898:                bg.SkipEIP1898,
-			FallbackBackends:           fallbackBackends,
-			routingStrategy:            bg.RoutingStrategy,
-			RestrictArchiveNodeTraffic: bg.RestrictArchiveNodeTraffic,
-			ArchiveBlockThreshold:      bg.ArchiveBlockThreshold,
+			Name:                        bgName,
+			Backends:                    backends,
+			WeightedRouting:             bg.WeightedRouting,
+			SkipEIP1898:                 bg.SkipEIP1898,
+			FallbackBackends:            fallbackBackends,
+			routingStrategy:             bg.RoutingStrategy,
+			multicallSendRawTransaction: bg.MulticallSendRawTransaction,
+			RestrictArchiveNodeTraffic:  bg.RestrictArchiveNodeTraffic,
+			ArchiveBlockThreshold:       bg.ArchiveBlockThreshold,
 		}
 	}
 
