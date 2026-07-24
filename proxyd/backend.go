@@ -850,19 +850,24 @@ func sortBatchRPCResponse(req []*RPCReq, res []*RPCRes) {
 }
 
 type BackendGroup struct {
-	Name                       string
-	Backends                   []*Backend
-	WeightedRouting            bool
-	SkipEIP1898                bool
-	Consensus                  *ConsensusPoller
-	FallbackBackends           map[string]bool
-	routingStrategy            RoutingStrategy
-	RestrictArchiveNodeTraffic bool
-	ArchiveBlockThreshold      uint64
+	Name                        string
+	Backends                    []*Backend
+	WeightedRouting             bool
+	SkipEIP1898                 bool
+	Consensus                   *ConsensusPoller
+	FallbackBackends            map[string]bool
+	routingStrategy             RoutingStrategy
+	multicallSendRawTransaction bool
+	RestrictArchiveNodeTraffic  bool
+	ArchiveBlockThreshold       uint64
 }
 
 func (bg *BackendGroup) GetRoutingStrategy() RoutingStrategy {
 	return bg.routingStrategy
+}
+
+func (bg *BackendGroup) MulticallSendRawTransaction() bool {
+	return bg.multicallSendRawTransaction
 }
 
 // hasArchiveBackend reports whether the group is configured with at least one archive
@@ -918,7 +923,9 @@ func (bg *BackendGroup) Forward(ctx context.Context, rpcReqs []*RPCReq, isBatch 
 
 	// When routing_strategy is set to 'multicall' the request will be forward to all backends
 	// and return the first successful response
-	if bg.GetRoutingStrategy() == MulticallRoutingStrategy && isValidMulticallTx(rpcReqs) && !isBatch {
+	if (bg.GetRoutingStrategy() == MulticallRoutingStrategy || bg.multicallSendRawTransaction) && isValidMulticallTx(rpcReqs) && !isBatch {
+		// Count here too: this branch returns before the shared rpcRequestsTotal.Inc() below.
+		rpcRequestsTotal.Inc()
 		backendResp := bg.ExecuteMulticall(ctx, rpcReqs)
 		return backendResp.RPCRes, backendResp.ServedBy, backendResp.error
 	}
@@ -1076,7 +1083,9 @@ func (bg *BackendGroup) ExecuteMulticall(ctx context.Context, rpcReqs []*RPCReq)
 		close(ch)
 	}()
 
-	return bg.ProcessMulticallResponses(ch, bgCtx)
+	// Wait for a response under the original request deadline (ctx); the fan-out
+	// goroutines keep delivering on the detached bgCtx after this returns.
+	return bg.ProcessMulticallResponses(ch, ctx)
 }
 
 func (bg *BackendGroup) MulticallRequest(backend *Backend, rpcReqs []*RPCReq, wg *sync.WaitGroup, ctx context.Context, ch chan *multicallTuple) {
@@ -1126,7 +1135,22 @@ func (bg *BackendGroup) ProcessMulticallResponses(ch chan *multicallTuple, ctx c
 	var finalResp *BackendGroupRPCResponse
 	i := 0
 	for {
-		multicallResp, ok := <-ch
+		var multicallResp *multicallTuple
+		var ok bool
+		select {
+		case <-ctx.Done():
+			log.Warn("multicall timed out waiting for a response",
+				"req_id", GetReqID(ctx),
+				"auth", GetAuthCtx(ctx),
+				"response_count", i,
+			)
+			return &BackendGroupRPCResponse{
+				RPCRes:   nil,
+				ServedBy: "",
+				error:    ErrGatewayTimeout,
+			}
+		case multicallResp, ok = <-ch:
+		}
 		if !ok {
 			log.Trace("multicall response channel closed",
 				"req_id", GetReqID(ctx),
