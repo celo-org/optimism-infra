@@ -94,3 +94,52 @@ func TestMulticallSendRawTransaction(t *testing.T) {
 			500*time.Millisecond, 50*time.Millisecond, "a read must not be broadcast")
 	})
 }
+
+// TestMulticallSendRawTransactionHonorsDeadline verifies that when the broadcast backends
+// all stall past the server deadline, the client's wait is bounded by server.timeout_seconds
+// (returning a gateway timeout) instead of blocking for the full backend response timeout.
+// The fan-out delivery itself runs on a detached context and continues after this returns;
+// only the wait for a response observes the deadline. Without that, this request would
+// instead return a success once the backends wake after their stall.
+func TestMulticallSendRawTransactionHonorsDeadline(t *testing.T) {
+	hang := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Stall well past the 1s server deadline so the wait, not the backend, decides timing.
+		time.Sleep(3 * time.Second)
+		SingleResponseHandler(200, txAccepted)(w, r)
+	})
+	node1 := NewMockBackend(hang)
+	node2 := NewMockBackend(hang)
+	node3 := NewMockBackend(hang)
+	defer node1.Close()
+	defer node2.Close()
+	defer node3.Close()
+
+	require.NoError(t, os.Setenv("NODE1_URL", node1.URL()))
+	require.NoError(t, os.Setenv("NODE2_URL", node2.URL()))
+	require.NoError(t, os.Setenv("NODE3_URL", node3.URL()))
+
+	config := ReadConfig("multicall_send_raw_tx_timeout")
+	svr, shutdown, err := proxyd.Start(config)
+	require.NoError(t, err)
+	defer shutdown()
+
+	require.True(t, svr.BackendGroups["node"].MulticallSendRawTransaction())
+
+	req, _ := http.NewRequest("POST", "https://1.1.1.1:8080", bytes.NewReader(makeSendRawTransaction(txHex1)))
+	req.Header.Set("X-Forwarded-For", "203.0.113.1")
+	rr := httptest.NewRecorder()
+
+	start := time.Now()
+	svr.HandleRPC(rr, req)
+	elapsed := time.Since(start)
+
+	resp := rr.Result()
+	defer resp.Body.Close()
+	rpcRes := &proxyd.RPCRes{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(rpcRes))
+
+	require.True(t, rpcRes.IsError(), "a stalled broadcast must return an error, not hang")
+	require.Equal(t, proxyd.ErrGatewayTimeout.Code, rpcRes.Error.Code, "should be a gateway timeout")
+	require.Less(t, elapsed, 2500*time.Millisecond,
+		"wait must be bounded by server.timeout_seconds (1s), not the 3s backend stall")
+}

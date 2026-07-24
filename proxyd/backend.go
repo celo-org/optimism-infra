@@ -1083,7 +1083,9 @@ func (bg *BackendGroup) ExecuteMulticall(ctx context.Context, rpcReqs []*RPCReq)
 		close(ch)
 	}()
 
-	return bg.ProcessMulticallResponses(ch, bgCtx)
+	// Wait for a response under the original request deadline (ctx); the fan-out
+	// goroutines keep delivering on the detached bgCtx after this returns.
+	return bg.ProcessMulticallResponses(ch, ctx)
 }
 
 func (bg *BackendGroup) MulticallRequest(backend *Backend, rpcReqs []*RPCReq, wg *sync.WaitGroup, ctx context.Context, ch chan *multicallTuple) {
@@ -1133,7 +1135,25 @@ func (bg *BackendGroup) ProcessMulticallResponses(ch chan *multicallTuple, ctx c
 	var finalResp *BackendGroupRPCResponse
 	i := 0
 	for {
-		multicallResp, ok := <-ch
+		var multicallResp *multicallTuple
+		var ok bool
+		select {
+		case <-ctx.Done():
+			log.Warn("multicall timed out waiting for a response",
+				"req_id", GetReqID(ctx),
+				"auth", GetAuthCtx(ctx),
+				"response_count", i,
+			)
+			if i > 0 {
+				return finalResp
+			}
+			return &BackendGroupRPCResponse{
+				RPCRes:   nil,
+				ServedBy: "",
+				error:    ErrGatewayTimeout,
+			}
+		case multicallResp, ok = <-ch:
+		}
 		if !ok {
 			log.Trace("multicall response channel closed",
 				"req_id", GetReqID(ctx),
