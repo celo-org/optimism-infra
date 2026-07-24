@@ -1144,9 +1144,6 @@ func (bg *BackendGroup) ProcessMulticallResponses(ch chan *multicallTuple, ctx c
 				"auth", GetAuthCtx(ctx),
 				"response_count", i,
 			)
-			if i > 0 {
-				return finalResp
-			}
 			return &BackendGroupRPCResponse{
 				RPCRes:   nil,
 				ServedBy: "",

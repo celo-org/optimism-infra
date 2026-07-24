@@ -143,3 +143,46 @@ func TestMulticallSendRawTransactionHonorsDeadline(t *testing.T) {
 	require.Less(t, elapsed, 2500*time.Millisecond,
 		"wait must be bounded by server.timeout_seconds (1s), not the 3s backend stall")
 }
+
+// TestMulticallSendRawTransactionReturnsTimeoutAfterPartialFailure verifies that an
+// early backend failure does not hide the deadline that ultimately ends the request.
+func TestMulticallSendRawTransactionReturnsTimeoutAfterPartialFailure(t *testing.T) {
+	hang := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(3 * time.Second)
+		SingleResponseHandler(200, txAccepted)(w, r)
+	})
+	node1 := NewMockBackend(SingleResponseHandler(http.StatusTooManyRequests, dummyRes))
+	node2 := NewMockBackend(hang)
+	node3 := NewMockBackend(hang)
+	defer node1.Close()
+	defer node2.Close()
+	defer node3.Close()
+
+	require.NoError(t, os.Setenv("NODE1_URL", node1.URL()))
+	require.NoError(t, os.Setenv("NODE2_URL", node2.URL()))
+	require.NoError(t, os.Setenv("NODE3_URL", node3.URL()))
+
+	config := ReadConfig("multicall_send_raw_tx_timeout")
+	svr, shutdown, err := proxyd.Start(config)
+	require.NoError(t, err)
+	defer shutdown()
+
+	req, _ := http.NewRequest("POST", "https://1.1.1.1:8080", bytes.NewReader(makeSendRawTransaction(txHex1)))
+	req.Header.Set("X-Forwarded-For", "203.0.113.1")
+	rr := httptest.NewRecorder()
+
+	start := time.Now()
+	svr.HandleRPC(rr, req)
+	elapsed := time.Since(start)
+
+	resp := rr.Result()
+	defer resp.Body.Close()
+	rpcRes := &proxyd.RPCRes{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(rpcRes))
+
+	require.Equal(t, http.StatusGatewayTimeout, resp.StatusCode)
+	require.True(t, rpcRes.IsError())
+	require.Equal(t, proxyd.ErrGatewayTimeout.Code, rpcRes.Error.Code)
+	require.Less(t, elapsed, 2500*time.Millisecond,
+		"an earlier backend failure must not mask the server deadline")
+}
