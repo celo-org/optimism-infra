@@ -435,7 +435,7 @@ func TestContainsArchiveRequiredError(t *testing.T) {
 			response: &RPCRes{
 				Error: &RPCErr{
 					Code: -32000,
-					Data: "missing trie node",
+					Data: json.RawMessage(`"missing trie node"`),
 				},
 			},
 			expected: true,
@@ -475,7 +475,7 @@ func TestContainsArchiveRequiredError(t *testing.T) {
 			response: &RPCRes{
 				Error: &RPCErr{
 					Code: -32002,
-					Data: "No state available for block 12345",
+					Data: json.RawMessage(`"No state available for block 12345"`),
 				},
 			},
 			expected: true,
@@ -505,7 +505,7 @@ func TestContainsArchiveRequiredError(t *testing.T) {
 			response: &RPCRes{
 				Error: &RPCErr{
 					Code: -32000,
-					Data: "failed to fetch receipts: got 0 receipts but expected 124",
+					Data: json.RawMessage(`"failed to fetch receipts: got 0 receipts but expected 124"`),
 				},
 			},
 			expected: true,
@@ -525,7 +525,7 @@ func TestContainsArchiveRequiredError(t *testing.T) {
 			response: &RPCRes{
 				Error: &RPCErr{
 					Code: -32000,
-					Data: "temp: failed to fetch receipts for L1 sysCfg update: received 0 receipts but expected 10",
+					Data: json.RawMessage(`"temp: failed to fetch receipts for L1 sysCfg update: received 0 receipts but expected 10"`),
 				},
 			},
 			expected: true,
@@ -555,7 +555,7 @@ func TestContainsArchiveRequiredError(t *testing.T) {
 			response: &RPCRes{
 				Error: &RPCErr{
 					Code: -32000,
-					Data: "temp: failed to fetch receipts: no transactions snapshot file for blockNum=8825881",
+					Data: json.RawMessage(`"temp: failed to fetch receipts: no transactions snapshot file for blockNum=8825881"`),
 				},
 			},
 			expected: true,

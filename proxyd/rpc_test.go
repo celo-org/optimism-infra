@@ -63,7 +63,7 @@ func TestRPCResJSON(t *testing.T) {
 				Error: &RPCErr{
 					Code:    1234,
 					Message: "test err",
-					Data:    "revert",
+					Data:    []byte(`"revert"`),
 				},
 				ID: []byte("123"),
 			},
@@ -86,4 +86,17 @@ func TestRPCResJSON(t *testing.T) {
 			require.Equal(t, tt.out, string(out))
 		})
 	}
+}
+
+// Some clients return a JSON object or number in error.data; that must not make the
+// whole response unparseable, and the data must round-trip unchanged.
+func TestRPCErrNonStringData(t *testing.T) {
+	in := `{"jsonrpc":"2.0","error":{"code":3,"message":"execution reverted","data":{"reason":"x","code":7}},"id":1}`
+	var res RPCRes
+	require.NoError(t, json.Unmarshal([]byte(in), &res))
+	require.JSONEq(t, `{"reason":"x","code":7}`, string(res.Error.Data))
+
+	out, err := json.Marshal(&res)
+	require.NoError(t, err)
+	require.JSONEq(t, in, string(out))
 }

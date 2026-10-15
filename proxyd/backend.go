@@ -2210,31 +2210,33 @@ func containsEmptyReceiptResponse(rpcReqs []*RPCReq, rpcRes []*RPCRes) bool {
 func containsArchiveRequiredError(responses []*RPCRes) bool {
 	for _, res := range responses {
 		if res != nil && res.IsError() && res.Error != nil {
+			// error.data is raw JSON (usually a quoted string); substring matching still works on it
+			data := string(res.Error.Data)
 			// Check both the message and data fields for errors requiring archive data
 			if strings.Contains(res.Error.Message, "missing trie node") ||
-				strings.Contains(res.Error.Data, "missing trie node") ||
+				strings.Contains(data, "missing trie node") ||
 				strings.Contains(res.Error.Message, "old data not available due to pruning") ||
-				strings.Contains(res.Error.Data, "old data not available due to pruning") ||
+				strings.Contains(data, "old data not available due to pruning") ||
 				strings.Contains(res.Error.Message, "root hash mismatch witnessTrieRootHash") ||
-				strings.Contains(res.Error.Data, "root hash mismatch witnessTrieRootHash") ||
+				strings.Contains(data, "root hash mismatch witnessTrieRootHash") ||
 				strings.Contains(res.Error.Message, "distance to target block exceeds maximum proof window") ||
-				strings.Contains(res.Error.Data, "distance to target block exceeds maximum proof window") ||
+				strings.Contains(data, "distance to target block exceeds maximum proof window") ||
 				strings.Contains(res.Error.Message, "No state available for block") ||
-				strings.Contains(res.Error.Data, "No state available for block") ||
+				strings.Contains(data, "No state available for block") ||
 				strings.Contains(res.Error.Message, "block number is in the future") ||
-				strings.Contains(res.Error.Data, "block number is in the future") ||
+				strings.Contains(data, "block number is in the future") ||
 				strings.Contains(res.Error.Message, "data before") && strings.Contains(res.Error.Message, "not available") ||
-				strings.Contains(res.Error.Data, "data before") && strings.Contains(res.Error.Data, "not available") ||
+				strings.Contains(data, "data before") && strings.Contains(data, "not available") ||
 				strings.Contains(res.Error.Message, "state at block") && strings.Contains(res.Error.Message, "is pruned") ||
-				strings.Contains(res.Error.Data, "state at block") && strings.Contains(res.Error.Data, "is pruned") ||
+				strings.Contains(data, "state at block") && strings.Contains(data, "is pruned") ||
 				strings.Contains(res.Error.Message, "got 0 receipts") && strings.Contains(res.Error.Message, "expected") ||
-				strings.Contains(res.Error.Data, "got 0 receipts") && strings.Contains(res.Error.Data, "expected") ||
+				strings.Contains(data, "got 0 receipts") && strings.Contains(data, "expected") ||
 				strings.Contains(res.Error.Message, "received 0 receipts") && strings.Contains(res.Error.Message, "expected") ||
-				strings.Contains(res.Error.Data, "received 0 receipts") && strings.Contains(res.Error.Data, "expected") ||
+				strings.Contains(data, "received 0 receipts") && strings.Contains(data, "expected") ||
 				strings.Contains(res.Error.Message, "no transactions snapshot file") ||
-				strings.Contains(res.Error.Data, "no transactions snapshot file") ||
+				strings.Contains(data, "no transactions snapshot file") ||
 				strings.Contains(res.Error.Message, "historical state") && strings.Contains(res.Error.Message, "is not available") ||
-				strings.Contains(res.Error.Data, "historical state") && strings.Contains(res.Error.Data, "is not available") {
+				strings.Contains(data, "historical state") && strings.Contains(data, "is not available") {
 				return true
 			}
 		}
