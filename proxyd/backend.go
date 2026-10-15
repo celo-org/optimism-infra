@@ -188,6 +188,12 @@ var (
 		HTTPErrorCode: 503,
 	}
 
+	ErrContextCanceled = &RPCErr{
+		Code:          JSONRPCErrorInternal - 23,
+		Message:       context.Canceled.Error(),
+		HTTPErrorCode: 499,
+	}
+
 	ErrBackendUnexpectedJSONRPC = errors.New("backend returned an unexpected JSON-RPC response")
 
 	ErrConsensusGetReceiptsCantBeBatched = errors.New("consensus_getReceipts cannot be batched")
@@ -500,6 +506,13 @@ func (b *Backend) Forward(ctx context.Context, reqs []*RPCReq, isBatch bool) ([]
 		res, err := b.doForward(ctx, reqs, isBatch)
 		switch err {
 		case nil: // do nothing
+		case ErrContextCanceled:
+			// return immediately on client cancellation
+			log.Debug("context canceled while forwarding request",
+				"name", b.Name,
+				"req_id", GetReqID(ctx),
+			)
+			return nil, err
 		case ErrBackendResponseTooLarge:
 			log.Warn(
 				"backend response too large",
@@ -713,13 +726,20 @@ func (b *Backend) doForward(ctx context.Context, rpcReqs []*RPCReq, isBatch bool
 	start := time.Now()
 	httpRes, err := b.client.DoLimited(httpReq)
 	if err != nil {
-		b.intermittentErrorsSlidingWindow.Incr()
-		RecordBackendNetworkErrorRateSlidingWindow(b, b.ErrorRate())
+		// The client went away, either while queued on the semaphore or mid-request.
+		// That says nothing about the backend's health, and there is nobody left to
+		// answer, so don't count it and don't fail over.
+		if errors.Is(err, ErrContextCanceled) || errors.Is(err, context.Canceled) {
+			return nil, ErrContextCanceled
+		}
 		// Check if this is a "too many requests" error from our own rate limiter
-		// to enable failover to other backends instead of retrying the same one
+		// to enable failover to other backends instead of retrying the same one.
+		// Local semaphore saturation is not a backend error either.
 		if strings.Contains(err.Error(), "too many requests") {
 			return nil, ErrBackendOverCapacity
 		}
+		b.intermittentErrorsSlidingWindow.Incr()
+		RecordBackendNetworkErrorRateSlidingWindow(b, b.ErrorRate())
 		return nil, wrapErr(err, "error in backend request")
 	}
 	defer httpRes.Body.Close()
@@ -1623,6 +1643,9 @@ func (c *LimitedHTTPClient) DoLimited(req *http.Request) (*http.Response, error)
 	defer span.End()
 
 	if err := c.sem.Acquire(req.Context(), 1); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return nil, ErrContextCanceled
+		}
 		tooManyRequestErrorsTotal.WithLabelValues(c.backendName).Inc()
 		return nil, wrapErr(err, "too many requests")
 	}
@@ -1707,7 +1730,10 @@ func (bg *BackendGroup) ForwardRequestToBackendGroup(
 
 			if errors.Is(err, ErrConsensusGetReceiptsCantBeBatched) ||
 				errors.Is(err, ErrConsensusGetReceiptsInvalidTarget) ||
-				errors.Is(err, ErrMethodNotWhitelisted) {
+				errors.Is(err, ErrMethodNotWhitelisted) ||
+				// the client cancelled the request: nothing is wrong with our
+				// backends, so don't try the rest or mark it unserviceable
+				errors.Is(err, ErrContextCanceled) {
 				return &BackendGroupRPCResponse{
 					RPCRes:   nil,
 					ServedBy: "",

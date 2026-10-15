@@ -3,9 +3,11 @@ package proxyd
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/stretchr/testify/assert"
@@ -887,4 +889,54 @@ func TestAllowedStatusCodes(t *testing.T) {
 	require.Equal(t, -32000, res[0].Error.Code)
 	require.Equal(t, "backend has a foo problem", res[0].Error.Message)
 	require.Equal(t, http.StatusServiceUnavailable, res[0].Error.HTTPErrorCode)
+}
+
+// A client that disconnects must not count against backend health, fail over to
+// other backends, or be recorded as unserviceable.
+func TestClientCancellationIsNotABackendError(t *testing.T) {
+	var secondHits int
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// the server only notices the client hanging up once the body has been read
+		_, _ = io.ReadAll(r.Body)
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+		}
+	}))
+	defer slow.Close()
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		secondHits++
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","result":"0x1","id":1}`))
+	}))
+	defer second.Close()
+
+	reqs := []*RPCReq{{ID: []byte("1"), Method: "eth_blockNumber"}}
+
+	t.Run("cancelled mid-request", func(t *testing.T) {
+		b1 := NewBackend("slow", slow.URL, "", semaphore.NewWeighted(1), WithMaxRetries(2))
+		b2 := NewBackend("second", second.URL, "", semaphore.NewWeighted(1))
+		bg := &BackendGroup{Name: "g", Backends: []*Backend{b1, b2}}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		time.AfterFunc(50*time.Millisecond, cancel)
+		res := bg.ForwardRequestToBackendGroup(reqs, bg.Backends, ctx, false)
+
+		require.ErrorIs(t, res.error, ErrContextCanceled)
+		require.Zero(t, b1.intermittentErrorsSlidingWindow.Count())
+		require.Zero(t, secondHits)
+	})
+
+	t.Run("cancelled while queued on the semaphore", func(t *testing.T) {
+		sem := semaphore.NewWeighted(1)
+		require.NoError(t, sem.Acquire(context.Background(), 1))
+		b := NewBackend("queued", second.URL, "", sem)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err := b.Forward(ctx, reqs, false)
+
+		require.ErrorIs(t, err, ErrContextCanceled)
+		require.Zero(t, b.intermittentErrorsSlidingWindow.Count())
+		require.Zero(t, secondHits)
+	})
 }
