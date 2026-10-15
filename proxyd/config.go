@@ -117,6 +117,9 @@ type BackendConfig struct {
 	ConsensusForcedCandidate    bool   `toml:"consensus_forced_candidate"`
 	ConsensusReceiptsTarget     string `toml:"consensus_receipts_target"`
 	Archive                     bool   `toml:"archive"`
+	// MaxBlocksBack skips this backend for reads more than this many blocks behind head
+	// (0 = no limit). For nodes that keep state for a recent window only.
+	MaxBlocksBack uint64 `toml:"max_blocks_back"`
 }
 
 type BackendsConfig map[string]*BackendConfig
