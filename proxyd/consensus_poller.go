@@ -626,10 +626,20 @@ func (cp *ConsensusPoller) fetchBlock(ctx context.Context, be *Backend, block st
 	if !ok {
 		return 0, "", fmt.Errorf("unexpected response to eth_getBlockByNumber on backend %s", be.Name)
 	}
-	blockNumber = hexutil.Uint64(hexutil.MustDecodeUint64(jsonMap["number"].(string)))
-	blockHash = jsonMap["hash"].(string)
+	numStr, ok := jsonMap["number"].(string)
+	if !ok {
+		return 0, "", fmt.Errorf("missing or invalid number in eth_getBlockByNumber response on backend %s", be.Name)
+	}
+	hashStr, ok := jsonMap["hash"].(string)
+	if !ok {
+		return 0, "", fmt.Errorf("missing or invalid hash in eth_getBlockByNumber response on backend %s", be.Name)
+	}
+	num, err := hexutil.DecodeUint64(numStr)
+	if err != nil {
+		return 0, "", fmt.Errorf("invalid number %q in eth_getBlockByNumber response on backend %s: %w", numStr, be.Name, err)
+	}
 
-	return
+	return hexutil.Uint64(num), hashStr, nil
 }
 
 // getPeerCount is a convenient wrapper to retrieve the current peer count from the backend
@@ -645,7 +655,10 @@ func (cp *ConsensusPoller) getPeerCount(ctx context.Context, be *Backend) (count
 		return 0, fmt.Errorf("unexpected response to net_peerCount on backend %s", be.Name)
 	}
 
-	count = hexutil.MustDecodeUint64(jsonMap)
+	count, err = hexutil.DecodeUint64(jsonMap)
+	if err != nil {
+		return 0, fmt.Errorf("invalid net_peerCount %q on backend %s: %w", jsonMap, be.Name, err)
+	}
 
 	return count, nil
 }
