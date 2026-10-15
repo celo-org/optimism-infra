@@ -895,6 +895,7 @@ type BackendGroup struct {
 	FallbackBackends            map[string]bool
 	routingStrategy             RoutingStrategy
 	multicallSendRawTransaction bool
+	multicallRPCErrorCheck      bool
 	RestrictArchiveNodeTraffic  bool
 	ArchiveBlockThreshold       uint64
 }
@@ -1061,6 +1062,9 @@ func (bg *BackendGroup) Forward(ctx context.Context, rpcReqs []*RPCReq, isBatch 
 	go func() {
 		defer close(ch)
 		backendResp := bg.ForwardRequestToBackendGroup(rpcReqs, backends, ctx, isBatch)
+		if errors.Is(backendResp.error, ErrNoBackends) {
+			RecordUnserviceableRequest(ctx, RPCRequestSourceHTTP)
+		}
 		ch <- *backendResp
 	}()
 	backendResp := <-ch
@@ -1126,7 +1130,11 @@ func (bg *BackendGroup) ExecuteMulticall(ctx context.Context, rpcReqs []*RPCReq)
 
 	// Wait for a response under the original request deadline (ctx); the fan-out
 	// goroutines keep delivering on the detached bgCtx after this returns.
-	return bg.ProcessMulticallResponses(ch, ctx)
+	resp, unserviceable := bg.ProcessMulticallResponses(ch, ctx)
+	if unserviceable {
+		RecordUnserviceableRequest(bgCtx, RPCRequestSourceHTTP)
+	}
+	return resp
 }
 
 func (bg *BackendGroup) MulticallRequest(backend *Backend, rpcReqs []*RPCReq, wg *sync.WaitGroup, ctx context.Context, ch chan *multicallTuple) {
@@ -1172,8 +1180,12 @@ func (bg *BackendGroup) MulticallRequest(backend *Backend, rpcReqs []*RPCReq, wg
 	}
 }
 
-func (bg *BackendGroup) ProcessMulticallResponses(ch chan *multicallTuple, ctx context.Context) *BackendGroupRPCResponse {
+// ProcessMulticallResponses returns the first successful response, or the last failed one.
+// The bool (unserviceable) is true only if no backend served the request at all; a JSON-RPC error
+// from a backend still counts as served.
+func (bg *BackendGroup) ProcessMulticallResponses(ch chan *multicallTuple, ctx context.Context) (*BackendGroupRPCResponse, bool) {
 	var finalResp *BackendGroupRPCResponse
+	allBackendsUnserviceable := true
 	i := 0
 	for {
 		var multicallResp *multicallTuple
@@ -1189,7 +1201,7 @@ func (bg *BackendGroup) ProcessMulticallResponses(ch chan *multicallTuple, ctx c
 				RPCRes:   nil,
 				ServedBy: "",
 				error:    ErrGatewayTimeout,
-			}
+			}, allBackendsUnserviceable
 		case multicallResp, ok = <-ch:
 		}
 		if !ok {
@@ -1199,13 +1211,13 @@ func (bg *BackendGroup) ProcessMulticallResponses(ch chan *multicallTuple, ctx c
 				"response_count", i,
 			)
 			if i > 0 {
-				return finalResp
+				return finalResp, allBackendsUnserviceable
 			}
 			return &BackendGroupRPCResponse{
 				RPCRes:   nil,
 				ServedBy: "",
 				error:    errors.New("no multicall response received"),
-			}
+			}, true
 		}
 
 		i++
@@ -1219,6 +1231,22 @@ func (bg *BackendGroup) ProcessMulticallResponses(ch chan *multicallTuple, ctx c
 				"err", resp.error,
 				"backend", backendName,
 			)
+			if !errors.Is(resp.error, ErrNoBackends) {
+				allBackendsUnserviceable = false
+			}
+			finalResp = resp
+			continue
+		}
+		allBackendsUnserviceable = false
+
+		// multicall only carries a single eth_sendRawTransaction, never a batch
+		if bg.multicallRPCErrorCheck && len(resp.RPCRes) > 0 && resp.RPCRes[0].IsError() {
+			log.Warn("received RPC error response from multicall channel, waiting for another backend",
+				"req_id", GetReqID(ctx),
+				"auth", GetAuthCtx(ctx),
+				"rpc_err", resp.RPCRes[0].Error,
+				"backend", backendName,
+			)
 			finalResp = resp
 			continue
 		}
@@ -1228,7 +1256,7 @@ func (bg *BackendGroup) ProcessMulticallResponses(ch chan *multicallTuple, ctx c
 			"served_by", resp.ServedBy,
 			"backend", backendName,
 		)
-		return resp
+		return resp, false
 	}
 }
 
@@ -1933,7 +1961,6 @@ func (bg *BackendGroup) ForwardRequestToBackendGroup(
 		return lastArchiveRequiredResponse
 	}
 
-	RecordUnserviceableRequest(ctx, RPCRequestSourceHTTP)
 	return &BackendGroupRPCResponse{
 		RPCRes:   nil,
 		ServedBy: "",

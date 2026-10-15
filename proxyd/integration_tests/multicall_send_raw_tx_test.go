@@ -186,3 +186,49 @@ func TestMulticallSendRawTransactionReturnsTimeoutAfterPartialFailure(t *testing
 	require.Less(t, elapsed, 2500*time.Millisecond,
 		"an earlier backend failure must not mask the server deadline")
 }
+
+// TestMulticallSendRawTransactionRPCErrorCheck verifies multicall_rpc_error_check: a fast
+// JSON-RPC error (e.g. "nonce too low") from one backend must not win over a slower
+// backend that accepted the transaction. Without the flag the first answer wins.
+func TestMulticallSendRawTransactionRPCErrorCheck(t *testing.T) {
+	for _, tc := range []struct {
+		config      string
+		wantSuccess bool
+	}{
+		{"multicall_send_raw_tx", false},
+		{"multicall_send_raw_tx_rpc_error_check", true},
+	} {
+		t.Run(tc.config, func(t *testing.T) {
+			slowAccept := func(w http.ResponseWriter, r *http.Request) {
+				time.Sleep(300 * time.Millisecond)
+				SingleResponseHandler(200, txAccepted)(w, r)
+			}
+			node1 := NewMockBackend(SingleResponseHandler(200, nonceErrorResponse))
+			node2 := NewMockBackend(SingleResponseHandler(200, nonceErrorResponse))
+			node3 := NewMockBackend(http.HandlerFunc(slowAccept))
+			defer node1.Close()
+			defer node2.Close()
+			defer node3.Close()
+
+			require.NoError(t, os.Setenv("NODE1_URL", node1.URL()))
+			require.NoError(t, os.Setenv("NODE2_URL", node2.URL()))
+			require.NoError(t, os.Setenv("NODE3_URL", node3.URL()))
+
+			svr, shutdown, err := proxyd.Start(ReadConfig(tc.config))
+			require.NoError(t, err)
+			defer shutdown()
+
+			req, _ := http.NewRequest("POST", "https://1.1.1.1:8080", bytes.NewReader(makeSendRawTransaction(txHex1)))
+			req.Header.Set("X-Forwarded-For", "203.0.113.1")
+			rr := httptest.NewRecorder()
+			svr.HandleRPC(rr, req)
+
+			rpcRes := &proxyd.RPCRes{}
+			require.NoError(t, json.NewDecoder(rr.Result().Body).Decode(rpcRes))
+			require.Equal(t, !tc.wantSuccess, rpcRes.IsError())
+			if tc.wantSuccess {
+				require.Equal(t, []string{"node/node3"}, rr.Result().Header["X-Served-By"])
+			}
+		})
+	}
+}

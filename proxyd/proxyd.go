@@ -256,6 +256,7 @@ func Start(config *Config) (*Server, func(), error) {
 			FallbackBackends:            fallbackBackends,
 			routingStrategy:             bg.RoutingStrategy,
 			multicallSendRawTransaction: bg.MulticallSendRawTransaction,
+			multicallRPCErrorCheck:      bg.MulticallRPCErrorCheck,
 			RestrictArchiveNodeTraffic:  bg.RestrictArchiveNodeTraffic,
 			ArchiveBlockThreshold:       bg.ArchiveBlockThreshold,
 		}

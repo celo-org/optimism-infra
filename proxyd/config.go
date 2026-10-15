@@ -178,6 +178,10 @@ type BackendGroupConfig struct {
 	// current leader; broadcasting guarantees the builder has the tx in its own mempool
 	// instead of relying on p2p gossip to deliver it.
 	MulticallSendRawTransaction bool `toml:"multicall_send_raw_transaction"`
+	// MulticallRPCErrorCheck makes multicall (strategy or multicall_send_raw_transaction) skip
+	// responses carrying a JSON-RPC error while waiting for a successful one, instead of
+	// returning whichever backend answered first. The last error is returned if none succeed.
+	MulticallRPCErrorCheck bool `toml:"multicall_rpc_error_check"`
 
 	/*
 		Deprecated: Use routing_strategy config to create a consensus_aware proxyd instance
