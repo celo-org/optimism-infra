@@ -1,0 +1,29 @@
+version: "2"
+
+linters:
+  enable:
+    - sqlclosecheck
+    - bodyclose
+    - asciicheck
+    - misspell
+    - errorlint
+  exclusions:
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - text: "errors\\.As"
+        linters:
+          - errorlint
+      - text: "errors\\.Is"
+        linters:
+          - errorlint
+
+formatters:
+  enable:
+    - goimports
+
+run:
+  timeout: 5m
