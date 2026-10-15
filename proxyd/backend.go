@@ -242,6 +242,7 @@ type Backend struct {
 	skipPeerCountCheck bool
 	forcedCandidate    bool
 	archive            bool
+	maxBlocksBack      uint64
 
 	maxDegradedLatencyThreshold time.Duration
 	maxLatencyThreshold         time.Duration
@@ -341,6 +342,12 @@ func WithConsensusForcedCandidate(forcedCandidate bool) BackendOpt {
 func WithArchive(archive bool) BackendOpt {
 	return func(b *Backend) {
 		b.archive = archive
+	}
+}
+
+func WithBackendMaxBlocksBack(maxBlocksBack uint64) BackendOpt {
+	return func(b *Backend) {
+		b.maxBlocksBack = maxBlocksBack
 	}
 }
 
@@ -1012,6 +1019,10 @@ func (bg *BackendGroup) Forward(ctx context.Context, rpcReqs []*RPCReq, isBatch 
 			backends = nonArchiveBackends
 		}
 		// If no non-archive backends available, use archive backends as fallback (keep original backends list)
+	}
+
+	if bg.Consensus != nil {
+		backends = filterByMaxBlocksBack(rpcReqs, backends, uint64(bg.Consensus.GetLatestBlockNumber()))
 	}
 
 	rpcRequestsTotal.Inc()
@@ -1790,6 +1801,9 @@ func (bg *BackendGroup) ForwardRequestToBackendGroup(
 				archiveBackends = append(archiveBackends, backend)
 			}
 		}
+		if bg.Consensus != nil {
+			archiveBackends = filterByMaxBlocksBack(rpcReqs, archiveBackends, uint64(bg.Consensus.GetLatestBlockNumber()))
+		}
 
 		// Try archive backends
 		for _, back := range archiveBackends {
@@ -2017,6 +2031,78 @@ func getLogsRequiresArchive(req *RPCReq, latestBlockNumber hexutil.Uint64, archi
 	return requiresArchiveForBlock(extractBlockParameter(filter["fromBlock"]), latestBlockNumber, archiveBlockThreshold)
 }
 
+// oldestRequestedBlock returns the oldest block number named by the requests: the block
+// parameter of blockParamIndex methods and eth_getLogs fromBlock ("earliest" counts as 0).
+// Block hashes and "pending" are ignored; in consensus groups latest/safe/finalized have
+// already been rewritten to numbers.
+func oldestRequestedBlock(reqs []*RPCReq) (uint64, bool) {
+	oldest, found := uint64(0), false
+	for _, req := range reqs {
+		var param interface{}
+		if req.Method == "eth_getLogs" {
+			var params []map[string]interface{}
+			if json.Unmarshal(req.Params, &params) != nil || len(params) == 0 {
+				continue
+			}
+			param = params[0]["fromBlock"]
+		} else if idx, ok := blockParamIndex[req.Method]; ok {
+			var params []interface{}
+			if json.Unmarshal(req.Params, &params) != nil || len(params) <= idx {
+				continue
+			}
+			param = params[idx]
+		} else {
+			continue
+		}
+
+		var n uint64
+		switch s := extractBlockParameter(param); {
+		case s == "earliest":
+			n = 0
+		case strings.HasPrefix(s, "0x"):
+			v, err := strconv.ParseUint(s[2:], 16, 64)
+			if err != nil {
+				continue
+			}
+			n = v
+		default:
+			continue
+		}
+		if !found || n < oldest {
+			oldest, found = n, true
+		}
+	}
+	return oldest, found
+}
+
+// filterByMaxBlocksBack drops backends whose max_blocks_back window doesn't reach the
+// oldest block the requests read. If no backend is left the list is returned unchanged,
+// as for the archive filter. Requests without a block number aren't filtered; an
+// out-of-window answer is then caught by containsArchiveRequiredError and retried.
+func filterByMaxBlocksBack(reqs []*RPCReq, backends []*Backend, latest uint64) []*Backend {
+	limited := false
+	for _, b := range backends {
+		limited = limited || b.maxBlocksBack > 0
+	}
+	if !limited {
+		return backends
+	}
+	oldest, ok := oldestRequestedBlock(reqs)
+	if !ok {
+		return backends
+	}
+	var eligible []*Backend
+	for _, b := range backends {
+		if b.maxBlocksBack == 0 || latest <= oldest || latest-oldest <= b.maxBlocksBack {
+			eligible = append(eligible, b)
+		}
+	}
+	if len(eligible) == 0 {
+		return backends
+	}
+	return eligible
+}
+
 // receiptMethods maps RPC methods that return receipt arrays.
 // When these return an empty array for an old block, it likely means the backend
 // has pruned the data and we should retry on archive backends.
@@ -2057,6 +2143,7 @@ func containsEmptyReceiptResponse(rpcReqs []*RPCReq, rpcRes []*RPCRes) bool {
 // - "old data not available due to pruning" - data has been pruned
 // - "root hash mismatch witnessTrieRootHash" - witness trie root hash mismatch
 // - "no transactions snapshot file" - backend doesn't have transaction snapshot for the block
+// - "historical state <root> is not available" - geth path-scheme node asked beyond --history.state
 func containsArchiveRequiredError(responses []*RPCRes) bool {
 	for _, res := range responses {
 		if res != nil && res.IsError() && res.Error != nil {
@@ -2082,7 +2169,9 @@ func containsArchiveRequiredError(responses []*RPCRes) bool {
 				strings.Contains(res.Error.Message, "received 0 receipts") && strings.Contains(res.Error.Message, "expected") ||
 				strings.Contains(res.Error.Data, "received 0 receipts") && strings.Contains(res.Error.Data, "expected") ||
 				strings.Contains(res.Error.Message, "no transactions snapshot file") ||
-				strings.Contains(res.Error.Data, "no transactions snapshot file") {
+				strings.Contains(res.Error.Data, "no transactions snapshot file") ||
+				strings.Contains(res.Error.Message, "historical state") && strings.Contains(res.Error.Message, "is not available") ||
+				strings.Contains(res.Error.Data, "historical state") && strings.Contains(res.Error.Data, "is not available") {
 				return true
 			}
 		}

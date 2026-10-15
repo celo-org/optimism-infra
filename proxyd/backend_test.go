@@ -554,6 +554,16 @@ func TestContainsArchiveRequiredError(t *testing.T) {
 			expected: true,
 		},
 		{
+			name: "geth historical state not available",
+			response: &RPCRes{
+				Error: &RPCErr{
+					Code:    -32000,
+					Message: "historical state add981c8d0c45fba76c101f64c4bd13cd193b19b093494eb991a6cbd4e244787 is not available",
+				},
+			},
+			expected: true,
+		},
+		{
 			name: "no error",
 			response: &RPCRes{
 				Result: json.RawMessage(`"0x123"`),
@@ -575,6 +585,46 @@ func TestContainsArchiveRequiredError(t *testing.T) {
 			}
 			result := containsArchiveRequiredError(responses)
 			assert.Equal(t, test.expected, result)
+		})
+	}
+}
+
+func TestFilterByMaxBlocksBack(t *testing.T) {
+	window := &Backend{Name: "window", maxBlocksBack: 100}
+	archive := &Backend{Name: "archive"}
+	both := []*Backend{window, archive}
+	req := func(method, params string) *RPCReq {
+		return &RPCReq{Method: method, Params: json.RawMessage(params)}
+	}
+	names := func(bs []*Backend) []string {
+		var out []string
+		for _, b := range bs {
+			out = append(out, b.Name)
+		}
+		return out
+	}
+
+	tests := []struct {
+		name     string
+		reqs     []*RPCReq
+		backends []*Backend
+		expected []string
+	}{
+		{"inside window", []*RPCReq{req("eth_getProof", `["0x1",[],"0x3e0"]`)}, both, []string{"window", "archive"}},
+		{"window edge", []*RPCReq{req("eth_getProof", `["0x1",[],"0x384"]`)}, both, []string{"window", "archive"}},
+		{"beyond window", []*RPCReq{req("eth_getProof", `["0x1",[],"0x383"]`)}, both, []string{"archive"}},
+		{"EIP-1898 object", []*RPCReq{req("eth_call", `[{},{"blockNumber":"0x10"}]`)}, both, []string{"archive"}},
+		{"earliest", []*RPCReq{req("eth_getBalance", `["0x1","earliest"]`)}, both, []string{"archive"}},
+		{"getLogs fromBlock", []*RPCReq{req("eth_getLogs", `[{"fromBlock":"0x10","toBlock":"0x3e8"}]`)}, both, []string{"archive"}},
+		{"oldest of batch", []*RPCReq{req("eth_getBalance", `["0x1","0x3e8"]`), req("eth_getCode", `["0x1","0x10"]`)}, both, []string{"archive"}},
+		{"block hash not filtered", []*RPCReq{req("eth_getProof", `["0x1",[],{"blockHash":"0xab"}]`)}, both, []string{"window", "archive"}},
+		{"no block param", []*RPCReq{req("eth_chainId", `[]`)}, both, []string{"window", "archive"}},
+		{"none eligible keeps list", []*RPCReq{req("eth_getProof", `["0x1",[],"0x10"]`)}, []*Backend{window}, []string{"window"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			// latest = 1000 (0x3e8); window reaches back to 900 (0x384).
+			assert.Equal(t, test.expected, names(filterByMaxBlocksBack(test.reqs, test.backends, 1000)))
 		})
 	}
 }
