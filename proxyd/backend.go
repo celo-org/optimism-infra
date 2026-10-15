@@ -13,6 +13,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/http/httptrace"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -252,7 +253,8 @@ type Backend struct {
 	networkRequestsSlidingWindow    *sw.AvgSlidingWindow
 	intermittentErrorsSlidingWindow *sw.AvgSlidingWindow
 
-	weight int
+	weight             int
+	allowedStatusCodes []int
 }
 
 type BackendOpt func(b *Backend)
@@ -261,6 +263,12 @@ func WithBasicAuth(username, password string) BackendOpt {
 	return func(b *Backend) {
 		b.authUsername = username
 		b.authPassword = password
+	}
+}
+
+func WithAllowedStatusCodes(allowedStatusCodes []int) BackendOpt {
+	return func(b *Backend) {
+		b.allowedStatusCodes = allowedStatusCodes
 	}
 }
 
@@ -441,6 +449,8 @@ func NewBackend(
 		latencySlidingWindow:            sw.NewSlidingWindow(),
 		networkRequestsSlidingWindow:    sw.NewSlidingWindow(),
 		intermittentErrorsSlidingWindow: sw.NewSlidingWindow(),
+
+		allowedStatusCodes: []int{400, 413}, // Alchemy returns a 400 on bad JSONs, and Quicknode returns a 413 on too large requests
 	}
 
 	backend.Override(opts...)
@@ -712,6 +722,7 @@ func (b *Backend) doForward(ctx context.Context, rpcReqs []*RPCReq, isBatch bool
 		}
 		return nil, wrapErr(err, "error in backend request")
 	}
+	defer httpRes.Body.Close()
 
 	metricLabelMethod := rpcReqs[0].Method
 	if isBatch {
@@ -725,8 +736,8 @@ func (b *Backend) doForward(ctx context.Context, rpcReqs []*RPCReq, isBatch bool
 		strconv.FormatBool(isBatch),
 	).Inc()
 
-	// Alchemy returns a 400 on bad JSONs, so handle that case
-	if httpRes.StatusCode != 200 && httpRes.StatusCode != 400 {
+	// if the response in unsuccessful and its status code is unexpected, consider that as an unhealthy backend
+	if httpRes.StatusCode != 200 && !slices.Contains(b.allowedStatusCodes, httpRes.StatusCode) {
 		b.intermittentErrorsSlidingWindow.Incr()
 		RecordBackendNetworkErrorRateSlidingWindow(b, b.ErrorRate())
 		// Return ErrBackendOverCapacity for 429 responses to enable failover to other backends
@@ -736,7 +747,6 @@ func (b *Backend) doForward(ctx context.Context, rpcReqs []*RPCReq, isBatch bool
 		return nil, fmt.Errorf("response code %d", httpRes.StatusCode)
 	}
 
-	defer httpRes.Body.Close()
 	resB, err := io.ReadAll(LimitReader(httpRes.Body, b.maxResponseSize))
 	if errors.Is(err, ErrLimitReaderOverLimit) {
 		return nil, ErrBackendResponseTooLarge

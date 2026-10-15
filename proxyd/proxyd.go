@@ -185,6 +185,9 @@ func Start(config *Config) (*Server, func(), error) {
 		opts = append(opts, WithArchive(cfg.Archive))
 		opts = append(opts, WithBackendMaxBlocksBack(cfg.MaxBlocksBack))
 		opts = append(opts, WithWeight(cfg.Weight))
+		if len(cfg.AllowedStatusCodes) > 0 {
+			opts = append(opts, WithAllowedStatusCodes(cfg.AllowedStatusCodes))
+		}
 
 		receiptsTarget, err := ReadFromEnvOrConfig(cfg.ConsensusReceiptsTarget)
 		if err != nil {

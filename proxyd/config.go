@@ -111,7 +111,8 @@ type BackendConfig struct {
 	StripTrailingXFF bool              `toml:"strip_trailing_xff"`
 	Headers          map[string]string `toml:"headers"`
 
-	Weight int `toml:"weight"`
+	Weight             int   `toml:"weight"`
+	AllowedStatusCodes []int `toml:"allowed_status_codes"`
 
 	ConsensusSkipPeerCountCheck bool   `toml:"consensus_skip_peer_count"`
 	ConsensusForcedCandidate    bool   `toml:"consensus_forced_candidate"`
