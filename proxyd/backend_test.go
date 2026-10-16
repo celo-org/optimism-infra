@@ -1,11 +1,18 @@
 package proxyd
 
 import (
+	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/semaphore"
 )
 
 func TestStripXFF(t *testing.T) {
@@ -428,7 +435,7 @@ func TestContainsArchiveRequiredError(t *testing.T) {
 			response: &RPCRes{
 				Error: &RPCErr{
 					Code: -32000,
-					Data: "missing trie node",
+					Data: json.RawMessage(`"missing trie node"`),
 				},
 			},
 			expected: true,
@@ -468,7 +475,7 @@ func TestContainsArchiveRequiredError(t *testing.T) {
 			response: &RPCRes{
 				Error: &RPCErr{
 					Code: -32002,
-					Data: "No state available for block 12345",
+					Data: json.RawMessage(`"No state available for block 12345"`),
 				},
 			},
 			expected: true,
@@ -498,7 +505,7 @@ func TestContainsArchiveRequiredError(t *testing.T) {
 			response: &RPCRes{
 				Error: &RPCErr{
 					Code: -32000,
-					Data: "failed to fetch receipts: got 0 receipts but expected 124",
+					Data: json.RawMessage(`"failed to fetch receipts: got 0 receipts but expected 124"`),
 				},
 			},
 			expected: true,
@@ -518,7 +525,7 @@ func TestContainsArchiveRequiredError(t *testing.T) {
 			response: &RPCRes{
 				Error: &RPCErr{
 					Code: -32000,
-					Data: "temp: failed to fetch receipts for L1 sysCfg update: received 0 receipts but expected 10",
+					Data: json.RawMessage(`"temp: failed to fetch receipts for L1 sysCfg update: received 0 receipts but expected 10"`),
 				},
 			},
 			expected: true,
@@ -548,7 +555,7 @@ func TestContainsArchiveRequiredError(t *testing.T) {
 			response: &RPCRes{
 				Error: &RPCErr{
 					Code: -32000,
-					Data: "temp: failed to fetch receipts: no transactions snapshot file for blockNum=8825881",
+					Data: json.RawMessage(`"temp: failed to fetch receipts: no transactions snapshot file for blockNum=8825881"`),
 				},
 			},
 			expected: true,
@@ -842,4 +849,94 @@ func TestArchiveDetectionIntegration(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAllowedStatusCodes(t *testing.T) {
+	unhealthyBackendServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","error":{"code":-32000,"message":"backend has a foo problem"},"id":1}`))
+	}))
+	defer unhealthyBackendServer.Close()
+
+	healthyBackendServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","result":"0x1","id":1}`))
+	}))
+	defer healthyBackendServer.Close()
+
+	unhealthyBackend := NewBackend("test-backend-healthy", unhealthyBackendServer.URL, "", semaphore.NewWeighted(1))
+	healthyBackend := NewBackend("test-backend-unhealthy", healthyBackendServer.URL, "", semaphore.NewWeighted(1))
+
+	require.Equal(t, []int{400, 413}, healthyBackend.allowedStatusCodes) // default allowed status codes
+
+	healthyBackend.allowedStatusCodes = []int{} // no need to explicitly allow 200
+	res, err := healthyBackend.doForward(context.Background(), []*RPCReq{{ID: []byte("1"), Method: "eth_blockNumber"}}, false)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Nil(t, res[0].Error) // denoting a successful RPC response
+
+	res, err = unhealthyBackend.doForward(context.Background(), []*RPCReq{{ID: []byte("1"), Method: "eth_blockNumber"}}, false)
+	require.Error(t, err)
+	require.Nil(t, res)
+	require.ErrorContains(t, err, "response code 503")
+
+	unhealthyBackend.allowedStatusCodes = []int{503}
+	res, err = unhealthyBackend.doForward(context.Background(), []*RPCReq{{ID: []byte("1"), Method: "eth_blockNumber"}}, false)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	// denotes the RPC response holding the error
+	require.NotNil(t, res[0].Error)
+	require.Equal(t, -32000, res[0].Error.Code)
+	require.Equal(t, "backend has a foo problem", res[0].Error.Message)
+	require.Equal(t, http.StatusServiceUnavailable, res[0].Error.HTTPErrorCode)
+}
+
+// A client that disconnects must not count against backend health, fail over to
+// other backends, or be recorded as unserviceable.
+func TestClientCancellationIsNotABackendError(t *testing.T) {
+	var secondHits int
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// the server only notices the client hanging up once the body has been read
+		_, _ = io.ReadAll(r.Body)
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+		}
+	}))
+	defer slow.Close()
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		secondHits++
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","result":"0x1","id":1}`))
+	}))
+	defer second.Close()
+
+	reqs := []*RPCReq{{ID: []byte("1"), Method: "eth_blockNumber"}}
+
+	t.Run("cancelled mid-request", func(t *testing.T) {
+		b1 := NewBackend("slow", slow.URL, "", semaphore.NewWeighted(1), WithMaxRetries(2))
+		b2 := NewBackend("second", second.URL, "", semaphore.NewWeighted(1))
+		bg := &BackendGroup{Name: "g", Backends: []*Backend{b1, b2}}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		time.AfterFunc(50*time.Millisecond, cancel)
+		res := bg.ForwardRequestToBackendGroup(reqs, bg.Backends, ctx, false)
+
+		require.ErrorIs(t, res.error, ErrContextCanceled)
+		require.Zero(t, b1.intermittentErrorsSlidingWindow.Count())
+		require.Zero(t, secondHits)
+	})
+
+	t.Run("cancelled while queued on the semaphore", func(t *testing.T) {
+		sem := semaphore.NewWeighted(1)
+		require.NoError(t, sem.Acquire(context.Background(), 1))
+		b := NewBackend("queued", second.URL, "", sem)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err := b.Forward(ctx, reqs, false)
+
+		require.ErrorIs(t, err, ErrContextCanceled)
+		require.Zero(t, b.intermittentErrorsSlidingWindow.Count())
+		require.Zero(t, secondHits)
+	})
 }

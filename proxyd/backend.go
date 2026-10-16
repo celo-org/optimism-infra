@@ -13,6 +13,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/http/httptrace"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -173,7 +174,7 @@ var (
 	ErrBackendResponseTooLarge = &RPCErr{
 		Code:          JSONRPCErrorInternal - 20,
 		Message:       "backend response too large",
-		HTTPErrorCode: 500,
+		HTTPErrorCode: 400,
 	}
 
 	ErrSanctionedAddress = &RPCErr{
@@ -185,6 +186,12 @@ var (
 		Code:          JSONRPCErrorInternal - 22,
 		Message:       "no archive backend available to serve historical eth_getLogs range",
 		HTTPErrorCode: 503,
+	}
+
+	ErrContextCanceled = &RPCErr{
+		Code:          JSONRPCErrorInternal - 23,
+		Message:       context.Canceled.Error(),
+		HTTPErrorCode: 499,
 	}
 
 	ErrBackendUnexpectedJSONRPC = errors.New("backend returned an unexpected JSON-RPC response")
@@ -252,7 +259,8 @@ type Backend struct {
 	networkRequestsSlidingWindow    *sw.AvgSlidingWindow
 	intermittentErrorsSlidingWindow *sw.AvgSlidingWindow
 
-	weight int
+	weight             int
+	allowedStatusCodes []int
 }
 
 type BackendOpt func(b *Backend)
@@ -261,6 +269,12 @@ func WithBasicAuth(username, password string) BackendOpt {
 	return func(b *Backend) {
 		b.authUsername = username
 		b.authPassword = password
+	}
+}
+
+func WithAllowedStatusCodes(allowedStatusCodes []int) BackendOpt {
+	return func(b *Backend) {
+		b.allowedStatusCodes = allowedStatusCodes
 	}
 }
 
@@ -441,6 +455,8 @@ func NewBackend(
 		latencySlidingWindow:            sw.NewSlidingWindow(),
 		networkRequestsSlidingWindow:    sw.NewSlidingWindow(),
 		intermittentErrorsSlidingWindow: sw.NewSlidingWindow(),
+
+		allowedStatusCodes: []int{400, 413}, // Alchemy returns a 400 on bad JSONs, and Quicknode returns a 413 on too large requests
 	}
 
 	backend.Override(opts...)
@@ -490,6 +506,13 @@ func (b *Backend) Forward(ctx context.Context, reqs []*RPCReq, isBatch bool) ([]
 		res, err := b.doForward(ctx, reqs, isBatch)
 		switch err {
 		case nil: // do nothing
+		case ErrContextCanceled:
+			// return immediately on client cancellation
+			log.Debug("context canceled while forwarding request",
+				"name", b.Name,
+				"req_id", GetReqID(ctx),
+			)
+			return nil, err
 		case ErrBackendResponseTooLarge:
 			log.Warn(
 				"backend response too large",
@@ -703,15 +726,23 @@ func (b *Backend) doForward(ctx context.Context, rpcReqs []*RPCReq, isBatch bool
 	start := time.Now()
 	httpRes, err := b.client.DoLimited(httpReq)
 	if err != nil {
-		b.intermittentErrorsSlidingWindow.Incr()
-		RecordBackendNetworkErrorRateSlidingWindow(b, b.ErrorRate())
+		// The client went away, either while queued on the semaphore or mid-request.
+		// That says nothing about the backend's health, and there is nobody left to
+		// answer, so don't count it and don't fail over.
+		if errors.Is(err, ErrContextCanceled) || errors.Is(err, context.Canceled) {
+			return nil, ErrContextCanceled
+		}
 		// Check if this is a "too many requests" error from our own rate limiter
-		// to enable failover to other backends instead of retrying the same one
+		// to enable failover to other backends instead of retrying the same one.
+		// Local semaphore saturation is not a backend error either.
 		if strings.Contains(err.Error(), "too many requests") {
 			return nil, ErrBackendOverCapacity
 		}
+		b.intermittentErrorsSlidingWindow.Incr()
+		RecordBackendNetworkErrorRateSlidingWindow(b, b.ErrorRate())
 		return nil, wrapErr(err, "error in backend request")
 	}
+	defer httpRes.Body.Close()
 
 	metricLabelMethod := rpcReqs[0].Method
 	if isBatch {
@@ -725,8 +756,8 @@ func (b *Backend) doForward(ctx context.Context, rpcReqs []*RPCReq, isBatch bool
 		strconv.FormatBool(isBatch),
 	).Inc()
 
-	// Alchemy returns a 400 on bad JSONs, so handle that case
-	if httpRes.StatusCode != 200 && httpRes.StatusCode != 400 {
+	// if the response in unsuccessful and its status code is unexpected, consider that as an unhealthy backend
+	if httpRes.StatusCode != 200 && !slices.Contains(b.allowedStatusCodes, httpRes.StatusCode) {
 		b.intermittentErrorsSlidingWindow.Incr()
 		RecordBackendNetworkErrorRateSlidingWindow(b, b.ErrorRate())
 		// Return ErrBackendOverCapacity for 429 responses to enable failover to other backends
@@ -736,7 +767,6 @@ func (b *Backend) doForward(ctx context.Context, rpcReqs []*RPCReq, isBatch bool
 		return nil, fmt.Errorf("response code %d", httpRes.StatusCode)
 	}
 
-	defer httpRes.Body.Close()
 	resB, err := io.ReadAll(LimitReader(httpRes.Body, b.maxResponseSize))
 	if errors.Is(err, ErrLimitReaderOverLimit) {
 		return nil, ErrBackendResponseTooLarge
@@ -865,6 +895,7 @@ type BackendGroup struct {
 	FallbackBackends            map[string]bool
 	routingStrategy             RoutingStrategy
 	multicallSendRawTransaction bool
+	multicallRPCErrorCheck      bool
 	RestrictArchiveNodeTraffic  bool
 	ArchiveBlockThreshold       uint64
 }
@@ -1031,6 +1062,9 @@ func (bg *BackendGroup) Forward(ctx context.Context, rpcReqs []*RPCReq, isBatch 
 	go func() {
 		defer close(ch)
 		backendResp := bg.ForwardRequestToBackendGroup(rpcReqs, backends, ctx, isBatch)
+		if errors.Is(backendResp.error, ErrNoBackends) {
+			RecordUnserviceableRequest(ctx, RPCRequestSourceHTTP)
+		}
 		ch <- *backendResp
 	}()
 	backendResp := <-ch
@@ -1096,7 +1130,11 @@ func (bg *BackendGroup) ExecuteMulticall(ctx context.Context, rpcReqs []*RPCReq)
 
 	// Wait for a response under the original request deadline (ctx); the fan-out
 	// goroutines keep delivering on the detached bgCtx after this returns.
-	return bg.ProcessMulticallResponses(ch, ctx)
+	resp, unserviceable := bg.ProcessMulticallResponses(ch, ctx)
+	if unserviceable {
+		RecordUnserviceableRequest(bgCtx, RPCRequestSourceHTTP)
+	}
+	return resp
 }
 
 func (bg *BackendGroup) MulticallRequest(backend *Backend, rpcReqs []*RPCReq, wg *sync.WaitGroup, ctx context.Context, ch chan *multicallTuple) {
@@ -1142,8 +1180,12 @@ func (bg *BackendGroup) MulticallRequest(backend *Backend, rpcReqs []*RPCReq, wg
 	}
 }
 
-func (bg *BackendGroup) ProcessMulticallResponses(ch chan *multicallTuple, ctx context.Context) *BackendGroupRPCResponse {
+// ProcessMulticallResponses returns the first successful response, or the last failed one.
+// The bool (unserviceable) is true only if no backend served the request at all; a JSON-RPC error
+// from a backend still counts as served.
+func (bg *BackendGroup) ProcessMulticallResponses(ch chan *multicallTuple, ctx context.Context) (*BackendGroupRPCResponse, bool) {
 	var finalResp *BackendGroupRPCResponse
+	allBackendsUnserviceable := true
 	i := 0
 	for {
 		var multicallResp *multicallTuple
@@ -1159,7 +1201,7 @@ func (bg *BackendGroup) ProcessMulticallResponses(ch chan *multicallTuple, ctx c
 				RPCRes:   nil,
 				ServedBy: "",
 				error:    ErrGatewayTimeout,
-			}
+			}, allBackendsUnserviceable
 		case multicallResp, ok = <-ch:
 		}
 		if !ok {
@@ -1169,13 +1211,13 @@ func (bg *BackendGroup) ProcessMulticallResponses(ch chan *multicallTuple, ctx c
 				"response_count", i,
 			)
 			if i > 0 {
-				return finalResp
+				return finalResp, allBackendsUnserviceable
 			}
 			return &BackendGroupRPCResponse{
 				RPCRes:   nil,
 				ServedBy: "",
 				error:    errors.New("no multicall response received"),
-			}
+			}, true
 		}
 
 		i++
@@ -1189,6 +1231,22 @@ func (bg *BackendGroup) ProcessMulticallResponses(ch chan *multicallTuple, ctx c
 				"err", resp.error,
 				"backend", backendName,
 			)
+			if !errors.Is(resp.error, ErrNoBackends) {
+				allBackendsUnserviceable = false
+			}
+			finalResp = resp
+			continue
+		}
+		allBackendsUnserviceable = false
+
+		// multicall only carries a single eth_sendRawTransaction, never a batch
+		if bg.multicallRPCErrorCheck && len(resp.RPCRes) > 0 && resp.RPCRes[0].IsError() {
+			log.Warn("received RPC error response from multicall channel, waiting for another backend",
+				"req_id", GetReqID(ctx),
+				"auth", GetAuthCtx(ctx),
+				"rpc_err", resp.RPCRes[0].Error,
+				"backend", backendName,
+			)
 			finalResp = resp
 			continue
 		}
@@ -1198,7 +1256,7 @@ func (bg *BackendGroup) ProcessMulticallResponses(ch chan *multicallTuple, ctx c
 			"served_by", resp.ServedBy,
 			"backend", backendName,
 		)
-		return resp
+		return resp, false
 	}
 }
 
@@ -1613,6 +1671,9 @@ func (c *LimitedHTTPClient) DoLimited(req *http.Request) (*http.Response, error)
 	defer span.End()
 
 	if err := c.sem.Acquire(req.Context(), 1); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return nil, ErrContextCanceled
+		}
 		tooManyRequestErrorsTotal.WithLabelValues(c.backendName).Inc()
 		return nil, wrapErr(err, "too many requests")
 	}
@@ -1697,7 +1758,10 @@ func (bg *BackendGroup) ForwardRequestToBackendGroup(
 
 			if errors.Is(err, ErrConsensusGetReceiptsCantBeBatched) ||
 				errors.Is(err, ErrConsensusGetReceiptsInvalidTarget) ||
-				errors.Is(err, ErrMethodNotWhitelisted) {
+				errors.Is(err, ErrMethodNotWhitelisted) ||
+				// the client cancelled the request: nothing is wrong with our
+				// backends, so don't try the rest or mark it unserviceable
+				errors.Is(err, ErrContextCanceled) {
 				return &BackendGroupRPCResponse{
 					RPCRes:   nil,
 					ServedBy: "",
@@ -1897,7 +1961,6 @@ func (bg *BackendGroup) ForwardRequestToBackendGroup(
 		return lastArchiveRequiredResponse
 	}
 
-	RecordUnserviceableRequest(ctx, RPCRequestSourceHTTP)
 	return &BackendGroupRPCResponse{
 		RPCRes:   nil,
 		ServedBy: "",
@@ -2147,31 +2210,33 @@ func containsEmptyReceiptResponse(rpcReqs []*RPCReq, rpcRes []*RPCRes) bool {
 func containsArchiveRequiredError(responses []*RPCRes) bool {
 	for _, res := range responses {
 		if res != nil && res.IsError() && res.Error != nil {
+			// error.data is raw JSON (usually a quoted string); substring matching still works on it
+			data := string(res.Error.Data)
 			// Check both the message and data fields for errors requiring archive data
 			if strings.Contains(res.Error.Message, "missing trie node") ||
-				strings.Contains(res.Error.Data, "missing trie node") ||
+				strings.Contains(data, "missing trie node") ||
 				strings.Contains(res.Error.Message, "old data not available due to pruning") ||
-				strings.Contains(res.Error.Data, "old data not available due to pruning") ||
+				strings.Contains(data, "old data not available due to pruning") ||
 				strings.Contains(res.Error.Message, "root hash mismatch witnessTrieRootHash") ||
-				strings.Contains(res.Error.Data, "root hash mismatch witnessTrieRootHash") ||
+				strings.Contains(data, "root hash mismatch witnessTrieRootHash") ||
 				strings.Contains(res.Error.Message, "distance to target block exceeds maximum proof window") ||
-				strings.Contains(res.Error.Data, "distance to target block exceeds maximum proof window") ||
+				strings.Contains(data, "distance to target block exceeds maximum proof window") ||
 				strings.Contains(res.Error.Message, "No state available for block") ||
-				strings.Contains(res.Error.Data, "No state available for block") ||
+				strings.Contains(data, "No state available for block") ||
 				strings.Contains(res.Error.Message, "block number is in the future") ||
-				strings.Contains(res.Error.Data, "block number is in the future") ||
+				strings.Contains(data, "block number is in the future") ||
 				strings.Contains(res.Error.Message, "data before") && strings.Contains(res.Error.Message, "not available") ||
-				strings.Contains(res.Error.Data, "data before") && strings.Contains(res.Error.Data, "not available") ||
+				strings.Contains(data, "data before") && strings.Contains(data, "not available") ||
 				strings.Contains(res.Error.Message, "state at block") && strings.Contains(res.Error.Message, "is pruned") ||
-				strings.Contains(res.Error.Data, "state at block") && strings.Contains(res.Error.Data, "is pruned") ||
+				strings.Contains(data, "state at block") && strings.Contains(data, "is pruned") ||
 				strings.Contains(res.Error.Message, "got 0 receipts") && strings.Contains(res.Error.Message, "expected") ||
-				strings.Contains(res.Error.Data, "got 0 receipts") && strings.Contains(res.Error.Data, "expected") ||
+				strings.Contains(data, "got 0 receipts") && strings.Contains(data, "expected") ||
 				strings.Contains(res.Error.Message, "received 0 receipts") && strings.Contains(res.Error.Message, "expected") ||
-				strings.Contains(res.Error.Data, "received 0 receipts") && strings.Contains(res.Error.Data, "expected") ||
+				strings.Contains(data, "received 0 receipts") && strings.Contains(data, "expected") ||
 				strings.Contains(res.Error.Message, "no transactions snapshot file") ||
-				strings.Contains(res.Error.Data, "no transactions snapshot file") ||
+				strings.Contains(data, "no transactions snapshot file") ||
 				strings.Contains(res.Error.Message, "historical state") && strings.Contains(res.Error.Message, "is not available") ||
-				strings.Contains(res.Error.Data, "historical state") && strings.Contains(res.Error.Data, "is not available") {
+				strings.Contains(data, "historical state") && strings.Contains(data, "is not available") {
 				return true
 			}
 		}

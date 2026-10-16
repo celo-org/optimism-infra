@@ -277,7 +277,8 @@ func (p *Provider) createTx(ctx context.Context, client *iclients.InstrumentedEt
 }
 
 func (p *Provider) sign(ctx context.Context, from *common.Address, tx *types.Transaction) (*types.Transaction, error) {
-	if p.walletConfig.SignerMethod == "static" {
+	switch p.walletConfig.SignerMethod {
+	case "static":
 		log.Debug("using static signer")
 		privateKey, err := crypto.HexToECDSA(p.walletConfig.PrivateKey)
 		if err != nil {
@@ -285,7 +286,7 @@ func (p *Provider) sign(ctx context.Context, from *common.Address, tx *types.Tra
 			return nil, err
 		}
 		return types.SignTx(tx, types.LatestSignerForChainID(&p.walletConfig.ChainID), privateKey)
-	} else if p.walletConfig.SignerMethod == "signer" {
+	case "signer":
 		tlsConfig := tls.CLIConfig{
 			TLSCaCert: p.signerConfig.TLSCaCert,
 			TLSCert:   p.signerConfig.TLSCert,
@@ -306,7 +307,7 @@ func (p *Provider) sign(ctx context.Context, from *common.Address, tx *types.Tra
 		}
 
 		return signedTx, nil
-	} else {
+	default:
 		return nil, errors.New("invalid signer method")
 	}
 }

@@ -1347,3 +1347,48 @@ func createMinimalTestContext() context.Context {
 	ctx = context.WithValue(ctx, ContextKeyReqID, "minimal-req") // nolint:staticcheck
 	return ctx
 }
+func TestPopulateContextRemoteAddrFallback(t *testing.T) {
+	tests := []struct {
+		name       string
+		remoteAddr string
+		header     string
+		want       string
+	}{
+		{
+			name:       "ipv4 host port",
+			remoteAddr: "127.0.0.1:8545",
+			want:       "127.0.0.1",
+		},
+		{
+			name:       "ipv6 host port",
+			remoteAddr: "[::1]:8545",
+			want:       "::1",
+		},
+		{
+			name:       "ipv6 without port",
+			remoteAddr: "::1",
+			want:       "::1",
+		},
+		{
+			name:       "header takes precedence",
+			remoteAddr: "[::1]:8545",
+			header:     "203.0.113.1",
+			want:       "203.0.113.1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &Server{rateLimitHeader: defaultRateLimitHeader}
+			req := httptest.NewRequest("POST", "/", nil)
+			req.RemoteAddr = tt.remoteAddr
+			if tt.header != "" {
+				req.Header.Set(defaultRateLimitHeader, tt.header)
+			}
+
+			ctx := s.populateContext(httptest.NewRecorder(), req)
+			require.NotNil(t, ctx)
+			require.Equal(t, tt.want, GetXForwardedFor(ctx))
+		})
+	}
+}

@@ -106,6 +106,9 @@ backends = ["infura"]
 # way to route the tx to the current leader; broadcasting guarantees the builder has the tx in
 # its own mempool instead of relying on p2p gossip. Default false.
 # multicall_send_raw_transaction = true
+# With multicall, keep waiting for a backend that accepts the tx instead of returning the first
+# answer when it carries a JSON-RPC error (e.g. "nonce too low"). Default false.
+# multicall_rpc_error_check = true
 # Period in which the backend wont serve requests if banned, default 5m
 # consensus_ban_period = "1m"
 # Maximum delay for update the backend, default 30s

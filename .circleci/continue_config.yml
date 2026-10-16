@@ -268,7 +268,7 @@ jobs:
         description: Go Module Name
         type: string
     docker:
-      - image: cimg/go:1.23
+      - image: cimg/go:1.26
     steps:
       - checkout
       - run:
@@ -283,12 +283,9 @@ jobs:
           working_directory: <<parameters.module>>
       - run:
           name: run lint
+          # golangci-lint v2: linters and exclusions live in the repo-root .golangci.yml
           command: |
-             if [ -f .golangci.yml ]; then
-              golangci-lint run -c .golangci.yml -E goimports,sqlclosecheck,bodyclose,asciicheck,misspell,errorlint -e "errors.As" -e "errors.Is" --concurrency 1 --timeout "5m0s" ./...
-             else
-              golangci-lint run -E goimports,sqlclosecheck,bodyclose,asciicheck,misspell,errorlint -e "errors.As" -e "errors.Is" --concurrency 1 --timeout "5m0s" ./...
-             fi
+            golangci-lint run --concurrency 1 ./...
           working_directory: <<parameters.module>>
 
   go-test:
