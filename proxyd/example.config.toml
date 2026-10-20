@@ -20,6 +20,9 @@ ws_port = 8085
 # Maximum client body size, in bytes, that the server will accept.
 max_body_size_bytes = 10485760
 max_concurrent_rpcs = 1000
+# Gzip HTTP responses of 1 KiB or more for clients that send Accept-Encoding: gzip.
+# Cuts egress for large responses (blocks, receipts, logs) by 3-20x. Off by default.
+enable_response_compression = false
 # Server log level
 log_level = "info"
 

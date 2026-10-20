@@ -363,6 +363,7 @@ func Start(config *Config) (*Server, func(), error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("error creating server: %w", err)
 	}
+	srv.compressResponses = config.Server.EnableResponseCompression
 
 	// Enable to support browser websocket connections.
 	// See https://pkg.go.dev/github.com/gorilla/websocket#hdr-Origin_Considerations

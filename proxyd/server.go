@@ -1,6 +1,8 @@
 package proxyd
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -41,6 +43,7 @@ const (
 	ContextKeyXForwardedFor      = "x_forwarded_for"
 	ContextKeyReferer            = "referer"
 	ContextKeyUserAgent          = "user_agent"
+	ContextKeyAcceptGzip         = "accept_gzip"
 	DefaultMaxBatchRPCCallsLimit = 100
 	MaxBatchRPCCallsHardLimit    = 1000
 	cacheStatusHdr               = "X-Proxyd-Cache-Status"
@@ -53,6 +56,8 @@ const (
 	maxRequestBodyLogLen         = 2000
 	defaultMaxUpstreamBatchSize  = 10
 	defaultRateLimitHeader       = "X-Forwarded-For"
+	// Smaller bodies are sent as is: below this size headers dominate and gzip saves little.
+	gzipMinSize = 1024
 )
 
 var emptyArrayResponse = json.RawMessage("[]")
@@ -71,6 +76,7 @@ type Server struct {
 	maxUpstreamBatchSize   int
 	maxBatchSize           int
 	enableServedByHeader   bool
+	compressResponses      bool
 	upgrader               *websocket.Upgrader
 	mainLim                FrontendRateLimiter
 	overrideLims           map[string]FrontendRateLimiter
@@ -812,6 +818,13 @@ func (s *Server) populateContext(w http.ResponseWriter, r *http.Request) context
 	isValora := strings.Contains(userAgent, "Valora") || strings.Contains(userAgent, "SheFi") || strings.Contains(userAgent, "cKash")
 	ctx = context.WithValue(ctx, "is_valora", isValora) // nolint:staticcheck
 
+	if s.compressResponses {
+		w.Header().Add("Vary", "Accept-Encoding")
+		if acceptsGzip(r.Header.Get("Accept-Encoding")) {
+			ctx = context.WithValue(ctx, ContextKeyAcceptGzip, true) // nolint:staticcheck
+		}
+	}
+
 	if len(s.authenticatedPaths) > 0 {
 		if authorization == "" || s.authenticatedPaths[authorization] == "" {
 			log.Info("blocked unauthorized request", "authorization", authorization)
@@ -997,30 +1010,75 @@ func writeRPCRes(ctx context.Context, w http.ResponseWriter, res *RPCRes) {
 		statusCode = res.Error.HTTPErrorCode
 	}
 
-	w.Header().Set("content-type", "application/json")
-	w.WriteHeader(statusCode)
-	ww := &recordLenWriter{Writer: w}
-	enc := json.NewEncoder(ww)
-	if err := enc.Encode(res); err != nil {
+	if err := writeJSON(ctx, w, statusCode, res); err != nil {
 		log.Error("error writing rpc response", "err", err)
 		RecordRPCError(ctx, BackendProxyd, MethodUnknown, err)
 		return
 	}
 	httpResponseCodesTotal.WithLabelValues(strconv.Itoa(statusCode)).Inc()
-	RecordResponsePayloadSize(ctx, ww.Len)
 }
 
 func writeBatchRPCRes(ctx context.Context, w http.ResponseWriter, res []*RPCRes) {
-	w.Header().Set("content-type", "application/json")
-	w.WriteHeader(200)
-	ww := &recordLenWriter{Writer: w}
-	enc := json.NewEncoder(ww)
-	if err := enc.Encode(res); err != nil {
+	if err := writeJSON(ctx, w, 200, res); err != nil {
 		log.Error("error writing batch rpc response", "err", err)
 		RecordRPCError(ctx, BackendProxyd, MethodUnknown, err)
-		return
 	}
-	RecordResponsePayloadSize(ctx, ww.Len)
+}
+
+var gzipWriters = sync.Pool{New: func() any { return gzip.NewWriter(nil) }}
+
+// writeJSON writes v as the response body with a Content-Length. The body is gzipped when
+// the request context allows it (see populateContext) and it is at least gzipMinSize bytes.
+// The payload size metric records the uncompressed size.
+func writeJSON(ctx context.Context, w http.ResponseWriter, statusCode int, v any) error {
+	body, err := json.Marshal(v)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return err
+	}
+	body = append(body, '\n') // json.Encoder used to add it; keep responses byte-identical
+	RecordResponsePayloadSize(ctx, len(body))
+
+	if gz, _ := ctx.Value(ContextKeyAcceptGzip).(bool); gz && len(body) >= gzipMinSize {
+		var buf bytes.Buffer
+		zw := gzipWriters.Get().(*gzip.Writer)
+		zw.Reset(&buf)
+		_, err = zw.Write(body)
+		if err == nil {
+			err = zw.Close()
+		}
+		gzipWriters.Put(zw)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return err
+		}
+		body = buf.Bytes()
+		w.Header().Set("Content-Encoding", "gzip")
+	}
+
+	w.Header().Set("content-type", "application/json")
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	w.WriteHeader(statusCode)
+	_, err = w.Write(body)
+	return err
+}
+
+// acceptsGzip reports whether an Accept-Encoding header value lists gzip without q=0.
+// A wildcard alone is not taken as consent.
+func acceptsGzip(header string) bool {
+	for _, part := range strings.Split(header, ",") {
+		coding, params, _ := strings.Cut(part, ";")
+		if !strings.EqualFold(strings.TrimSpace(coding), "gzip") {
+			continue
+		}
+		q, ok := strings.CutPrefix(strings.TrimSpace(params), "q=")
+		if !ok {
+			return true
+		}
+		f, err := strconv.ParseFloat(strings.TrimSpace(q), 64)
+		return err == nil && f > 0
+	}
+	return false
 }
 
 func instrumentedHdlr(h http.Handler) http.HandlerFunc {
@@ -1070,17 +1128,6 @@ func GetUserAgent(ctx context.Context) string {
 		return ""
 	}
 	return userAgent
-}
-
-type recordLenWriter struct {
-	io.Writer
-	Len int
-}
-
-func (w *recordLenWriter) Write(p []byte) (n int, err error) {
-	n, err = w.Writer.Write(p)
-	w.Len += n
-	return
 }
 
 type NoopRPCCache struct{}
