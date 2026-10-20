@@ -14,10 +14,15 @@ jobs:
     outputs:
       files-changed: ${{ steps.detect-files-changed.outputs.all_changed_files }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Detect files changed
         id: detect-files-changed
-        uses: tj-actions/changed-files@v44
+        uses: step-security/changed-files@2e07db73e5ccdb319b9a6c7766bd46d39d304bad # v47.0.5
         with:
           separator: ','
 

@@ -7,6 +7,9 @@ on:
       - op-conductor-ops-v[0-9].[0-9]+.[0-9]+
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   compute-tag-proxyd:
     runs-on: 'ubuntu-latest'
@@ -16,8 +19,13 @@ jobs:
     outputs:
       modified_tag: ${{ steps.remove-proxyd-prefix.outputs.modified_tag }}
     steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Remove proxyd- prefix from tag
         id: remove-proxyd-prefix
         run: echo "::set-output name=modified_tag::$(echo '${{ github.ref_name }}' | sed 's/^proxyd-//')"
@@ -51,8 +59,13 @@ jobs:
     outputs:
       modified_tag: ${{ steps.remove-op-conductor-ops-prefix.outputs.modified_tag }}
     steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Remove op-conductor-ops- prefix from tag
         id: remove-op-conductor-ops-prefix
         run: echo "::set-output name=modified_tag::$(echo '${{ github.ref_name }}' | sed 's/^op-conductor-ops-//')"
