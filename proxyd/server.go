@@ -1047,6 +1047,7 @@ func writeJSON(ctx context.Context, w http.ResponseWriter, statusCode int, v any
 		if err == nil {
 			err = zw.Close()
 		}
+		zw.Reset(io.Discard) // so the pooled writer doesn't keep buf alive
 		gzipWriters.Put(zw)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
