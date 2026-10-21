@@ -29,6 +29,9 @@ type ServerConfig struct {
 	EnablePprof           bool `toml:"enable_pprof"`
 	EnableXServedByHeader bool `toml:"enable_served_by_header"`
 	AllowAllOrigins       bool `toml:"allow_all_origins"`
+	// EnableResponseCompression gzips HTTP JSON-RPC responses of 1 KiB or more when the
+	// client accepts gzip. Websocket messages are not affected.
+	EnableResponseCompression bool `toml:"enable_response_compression"`
 
 	// Archive indicates whether the backend supports archive requests
 	Archive bool `toml:"archive"`

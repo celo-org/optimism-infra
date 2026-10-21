@@ -1392,3 +1392,24 @@ func TestPopulateContextRemoteAddrFallback(t *testing.T) {
 		})
 	}
 }
+
+func TestAcceptsGzip(t *testing.T) {
+	for header, want := range map[string]bool{
+		"":                  false,
+		"gzip":              true,
+		"br, gzip":          true, // what Cloudflare sends to origins
+		"GZIP;q=0.5":        true,
+		"gzip; q=1, br":     true,
+		"gzip;q=0":          false,
+		"gzip;Q=0":          false,
+		"gzip; Q=0.5":       true,
+		"gzip; q=0.000, br": false,
+		"gzip;q=bogus":      false,
+		"deflate, br":       false,
+		"identity":          false,
+		"x-gzip":            false,
+		"*":                 false,
+	} {
+		require.Equal(t, want, acceptsGzip(header), "Accept-Encoding: %q", header)
+	}
+}
