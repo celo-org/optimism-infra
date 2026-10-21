@@ -1401,6 +1401,8 @@ func TestAcceptsGzip(t *testing.T) {
 		"GZIP;q=0.5":        true,
 		"gzip; q=1, br":     true,
 		"gzip;q=0":          false,
+		"gzip;Q=0":          false,
+		"gzip; Q=0.5":       true,
 		"gzip; q=0.000, br": false,
 		"gzip;q=bogus":      false,
 		"deflate, br":       false,

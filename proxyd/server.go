@@ -1071,7 +1071,8 @@ func acceptsGzip(header string) bool {
 		if !strings.EqualFold(strings.TrimSpace(coding), "gzip") {
 			continue
 		}
-		q, ok := strings.CutPrefix(strings.TrimSpace(params), "q=")
+		// Parameter names are case-insensitive (RFC 9110 5.6.6): Q=0 refuses gzip too.
+		q, ok := strings.CutPrefix(strings.ToLower(strings.TrimSpace(params)), "q=")
 		if !ok {
 			return true
 		}
