@@ -571,6 +571,17 @@ func TestContainsArchiveRequiredError(t *testing.T) {
 			expected: true,
 		},
 		{
+			name: "nethermind historical state proof not supported",
+			response: &RPCRes{
+				Error: &RPCErr{
+					Code:    -32000,
+					Message: "State proofs at historical block 26296969 are not supported",
+					Data:    json.RawMessage(`"Nethermind.Trie.MissingTrieNodeException: State proofs at historical block 26296969 are not supported"`),
+				},
+			},
+			expected: true,
+		},
+		{
 			name: "no error",
 			response: &RPCRes{
 				Result: json.RawMessage(`"0x123"`),

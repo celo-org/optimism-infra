@@ -2236,7 +2236,9 @@ func containsArchiveRequiredError(responses []*RPCRes) bool {
 				strings.Contains(res.Error.Message, "no transactions snapshot file") ||
 				strings.Contains(data, "no transactions snapshot file") ||
 				strings.Contains(res.Error.Message, "historical state") && strings.Contains(res.Error.Message, "is not available") ||
-				strings.Contains(data, "historical state") && strings.Contains(data, "is not available") {
+				strings.Contains(data, "historical state") && strings.Contains(data, "is not available") ||
+				strings.Contains(res.Error.Message, "State proofs at historical block") && strings.Contains(res.Error.Message, "are not supported") ||
+				strings.Contains(data, "State proofs at historical block") && strings.Contains(data, "are not supported") {
 				return true
 			}
 		}
