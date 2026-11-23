@@ -138,6 +138,11 @@ backends = ["infura"]
 # Number of blocks from head beyond which requests are routed to archive backends.
 # Default: 128 (standard full-node state window)
 # archive_block_threshold = 1000000
+# Route reads pinned with an EIP-1898 {"blockHash": ...} object like non-archive reads,
+# default false (blockHash reads go only to archive backends). For clients that pin
+# recent blocks by hash; an old hash still reaches the archive backends through the
+# archive-required error retry.
+# block_hash_prefer_non_archive = true
 # Note: if the group has archive backends configured but none are currently healthy, an
 # eth_getLogs whose range requires archive fails with an explicit error (HTTP 503) rather
 # than being served from a full node, which would silently return [] for pruned blocks.

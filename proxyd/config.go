@@ -208,6 +208,12 @@ type BackendGroupConfig struct {
 	Fallbacks                  []string `toml:"fallbacks"`
 	RestrictArchiveNodeTraffic bool     `toml:"restrict_archive_node_traffic"`
 	ArchiveBlockThreshold      uint64   `toml:"archive_block_threshold"`
+	// BlockHashPreferNonArchive routes reads pinned with an EIP-1898 {"blockHash": ...}
+	// object like any other non-archive read instead of sending them only to archive
+	// backends. Clients that pin recent blocks by hash (e.g. op-succinct) then stay on
+	// full nodes; an old hash a full node can't serve is still retried on the archive
+	// backends when it answers with an archive-required error.
+	BlockHashPreferNonArchive bool `toml:"block_hash_prefer_non_archive"`
 }
 
 type BackendGroupsConfig map[string]*BackendGroupConfig

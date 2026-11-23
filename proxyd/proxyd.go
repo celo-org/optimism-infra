@@ -259,6 +259,7 @@ func Start(config *Config) (*Server, func(), error) {
 			multicallRPCErrorCheck:      bg.MulticallRPCErrorCheck,
 			RestrictArchiveNodeTraffic:  bg.RestrictArchiveNodeTraffic,
 			ArchiveBlockThreshold:       bg.ArchiveBlockThreshold,
+			BlockHashPreferNonArchive:   bg.BlockHashPreferNonArchive,
 		}
 	}
 
