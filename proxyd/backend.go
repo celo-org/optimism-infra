@@ -898,6 +898,7 @@ type BackendGroup struct {
 	multicallRPCErrorCheck      bool
 	RestrictArchiveNodeTraffic  bool
 	ArchiveBlockThreshold       uint64
+	BlockHashPreferNonArchive   bool
 }
 
 func (bg *BackendGroup) GetRoutingStrategy() RoutingStrategy {
@@ -1007,7 +1008,8 @@ func (bg *BackendGroup) Forward(ctx context.Context, rpcReqs []*RPCReq, isBatch 
 		blockParam := extractBlockParameter(params[idx])
 		if blockParam == "" {
 			// Special case: if it's a map with blockHash, assume archive is required
-			if blockParamMap, ok := params[idx].(map[string]interface{}); ok {
+			// (unless block_hash_prefer_non_archive relies on the archive-error retry).
+			if blockParamMap, ok := params[idx].(map[string]interface{}); ok && !bg.BlockHashPreferNonArchive {
 				if _, exists := blockParamMap["blockHash"]; exists {
 					archiveRequired = true
 				}

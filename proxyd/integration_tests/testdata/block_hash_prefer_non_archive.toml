@@ -1,0 +1,28 @@
+[server]
+rpc_port = 8545
+
+[backend]
+response_timeout_seconds = 1
+
+[backends]
+[backends.full]
+rpc_url = "$FULL_URL"
+
+[backends.archive]
+rpc_url = "$ARCHIVE_URL"
+archive = true
+
+# Same backends; only "prefer" sets block_hash_prefer_non_archive.
+[backend_groups]
+[backend_groups.prefer]
+backends = ["archive", "full"]
+restrict_archive_node_traffic = true
+block_hash_prefer_non_archive = true
+
+[backend_groups.default]
+backends = ["archive", "full"]
+restrict_archive_node_traffic = true
+
+[rpc_method_mappings]
+eth_getBalance = "prefer"
+eth_getCode = "default"
